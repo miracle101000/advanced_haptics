@@ -6,6 +6,7 @@ public class AdvancedHapticsPlugin: NSObject, FlutterPlugin {
   private var engine: CHHapticEngine?
   // Using a single, shared player for all haptic events ensures predictable state.
   private var advancedPlayer: CHHapticAdvancedPatternPlayer?
+  private var isEngineRunning = false
 
   private enum EngineStateError: Error {
     case unavailable
@@ -28,23 +29,28 @@ public class AdvancedHapticsPlugin: NSObject, FlutterPlugin {
     do {
       engine = try CHHapticEngine()
       try engine?.start()
+      isEngineRunning = true
 
       engine?.resetHandler = { [weak self] in
         print("Haptic engine reset, restarting...")
         do {
           try self?.engine?.start()
+          self?.isEngineRunning = true
         } catch {
           print("Failed to restart the haptic engine: \(error)")
+          self?.isEngineRunning = false
         }
       }
 
       engine?.stoppedHandler = { [weak self] reason in
         print("Haptic engine stopped for reason: \(reason.rawValue)")
         self?.advancedPlayer = nil
+        self?.isEngineRunning = false
       }
 
     } catch {
       print("Error creating haptic engine: \(error.localizedDescription)")
+      isEngineRunning = false
     }
   }
 
@@ -57,26 +63,25 @@ public class AdvancedHapticsPlugin: NSObject, FlutterPlugin {
       throw EngineStateError.unavailable
     }
 
-    guard !engine.isRunning else { return engine }
+    guard !isEngineRunning else { return engine }
 
     do {
       try engine.start()
+      isEngineRunning = true
       return engine
     } catch {
       print("Failed to start existing haptic engine: \(error)")
       self.engine = nil
+      isEngineRunning = false
       setupHapticEngine()
 
       guard let restartedEngine = self.engine else {
         throw EngineStateError.unavailable
       }
 
-      if restartedEngine.isRunning {
-        return restartedEngine
-      }
-
       do {
         try restartedEngine.start()
+        isEngineRunning = true
         return restartedEngine
       } catch {
         print("Failed to start re-created haptic engine: \(error)")
