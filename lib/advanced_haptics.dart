@@ -140,7 +140,7 @@ class AdvancedHaptics {
   /// Plays a quick, light tap haptic feedback.
   static Future<void> lightTap({
     List<int> timings = const [0, 30],
-    List<int> amplitudes = const [180, 0],
+    List<int> amplitudes = const [0, 180],
   }) async {
     await playWaveform(timings, amplitudes);
   }
@@ -148,7 +148,7 @@ class AdvancedHaptics {
   /// Plays a medium-strength haptic tap.
   static Future<void> mediumTap({
     List<int> timings = const [0, 50],
-    List<int> amplitudes = const [200, 0],
+    List<int> amplitudes = const [0, 220],
   }) async {
     await playWaveform(timings, amplitudes);
   }
@@ -156,7 +156,7 @@ class AdvancedHaptics {
   /// Plays a strong, short "heavy rumble" haptic.
   static Future<void> heavyRumble({
     List<int> timings = const [0, 200],
-    List<int> amplitudes = const [255, 0],
+    List<int> amplitudes = const [0, 255],
   }) async {
     await playWaveform(timings, amplitudes);
   }
@@ -164,7 +164,7 @@ class AdvancedHaptics {
   /// Plays a double-tap success haptic pattern.
   static Future<void> successBuzz({
     List<int> timings = const [0, 50, 100, 50],
-    List<int> amplitudes = const [255, 0, 255, 0],
+    List<int> amplitudes = const [0, 255, 0, 255],
   }) async {
     await playWaveform(timings, amplitudes);
   }
@@ -172,7 +172,7 @@ class AdvancedHaptics {
   /// Plays an error-like feedback with two longer buzzes.
   static Future<void> error({
     List<int> timings = const [0, 100, 50, 100],
-    List<int> amplitudes = const [255, 0, 200, 0],
+    List<int> amplitudes = const [0, 255, 0, 200],
   }) async {
     await playWaveform(timings, amplitudes);
   }
@@ -180,7 +180,7 @@ class AdvancedHaptics {
   /// Plays a short, crisp selection click haptic.
   static Future<void> selectionClick({
     List<int> timings = const [0, 20],
-    List<int> amplitudes = const [120, 0],
+    List<int> amplitudes = const [0, 120],
   }) async {
     await playWaveform(timings, amplitudes);
   }
