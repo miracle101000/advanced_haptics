@@ -1,6 +1,6 @@
 name: advanced_haptics
 description: "A Flutter plugin for playing advanced, custom haptic feedback patterns on Android and iOS, including waveforms and Core Haptics .ahap files."
-version: 1.0.5
+version: 1.0.6
 homepage: https://github.com/miracle101000/advanced_haptics
 
 environment:

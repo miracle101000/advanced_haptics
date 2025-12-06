@@ -51,3 +51,6 @@
 ## 1.0.5
 
 - Resolved a build error on iOS versions below 16 caused by use of CHHapticPattern(contentsOf:), which is only available in iOS 16+. Implemented a fallback using manual AHAP JSON decoding and CHHapticPattern(dictionary:) for compatibility with iOS 13–15.
+
+## 1.0.6
+from kvenn/bug-foreground-restart (Fixed)
