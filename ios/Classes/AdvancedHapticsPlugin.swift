@@ -6,6 +6,12 @@ public class AdvancedHapticsPlugin: NSObject, FlutterPlugin {
   private var engine: CHHapticEngine?
   // Using a single, shared player for all haptic events ensures predictable state.
   private var advancedPlayer: CHHapticAdvancedPatternPlayer?
+  private var isEngineRunning = false
+
+  private enum EngineStateError: Error {
+    case unavailable
+    case restartFailed(Error)
+  }
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: "com.example/advanced_haptics", binaryMessenger: registrar.messenger())
@@ -23,33 +29,71 @@ public class AdvancedHapticsPlugin: NSObject, FlutterPlugin {
     do {
       engine = try CHHapticEngine()
       try engine?.start()
+      isEngineRunning = true
 
       engine?.resetHandler = { [weak self] in
         print("Haptic engine reset, restarting...")
         do {
           try self?.engine?.start()
+          self?.isEngineRunning = true
         } catch {
           print("Failed to restart the haptic engine: \(error)")
+          self?.isEngineRunning = false
         }
       }
 
-      engine?.stoppedHandler = { reason in
+      engine?.stoppedHandler = { [weak self] reason in
         print("Haptic engine stopped for reason: \(reason.rawValue)")
+        self?.advancedPlayer = nil
+        self?.isEngineRunning = false
       }
 
     } catch {
       print("Error creating haptic engine: \(error.localizedDescription)")
+      isEngineRunning = false
+    }
+  }
+
+  private func ensureHapticEngineReady() throws -> CHHapticEngine {
+    if engine == nil {
+      setupHapticEngine()
+    }
+
+    guard let engine = engine else {
+      throw EngineStateError.unavailable
+    }
+
+    guard !isEngineRunning else { return engine }
+
+    do {
+      try engine.start()
+      isEngineRunning = true
+      return engine
+    } catch {
+      print("Failed to start existing haptic engine: \(error)")
+      self.engine = nil
+      isEngineRunning = false
+      setupHapticEngine()
+
+      guard let restartedEngine = self.engine else {
+        throw EngineStateError.unavailable
+      }
+
+      do {
+        try restartedEngine.start()
+        isEngineRunning = true
+        return restartedEngine
+      } catch {
+        print("Failed to start re-created haptic engine: \(error)")
+        throw EngineStateError.restartFailed(error)
+      }
     }
   }
 
   // --- CHANGE 1: Create a private helper function to reduce duplication ---
   private func _playPattern(pattern: CHHapticPattern, atTime: TimeInterval, result: @escaping FlutterResult) {
-    guard let engine = engine else {
-        result(FlutterError(code: "ENGINE_NIL", message: "Haptic engine is not available.", details: nil))
-        return
-    }
-
     do {
+      let engine = try ensureHapticEngineReady()
       // Always stop the previous player before starting a new one.
       try advancedPlayer?.stop(atTime: CHHapticTimeImmediate)
       
@@ -62,12 +106,25 @@ public class AdvancedHapticsPlugin: NSObject, FlutterPlugin {
       try advancedPlayer?.start(atTime: atTime)
       result(nil)
     } catch {
-      result(FlutterError(code: "PLAYBACK_ERROR", message: "Failed to play haptic pattern", details: error.localizedDescription))
+      if let engineError = error as? EngineStateError {
+        switch engineError {
+        case .unavailable:
+          result(FlutterError(code: "ENGINE_NIL", message: "Haptic engine is not available.", details: nil))
+        case .restartFailed(let underlying):
+          result(FlutterError(code: "ENGINE_START_FAILED", message: "Failed to restart the haptic engine.", details: underlying.localizedDescription))
+        }
+      } else {
+        result(FlutterError(code: "PLAYBACK_ERROR", message: "Failed to play haptic pattern", details: error.localizedDescription))
+      }
     }
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-    guard let engine = engine else {
+    if engine == nil {
+      setupHapticEngine()
+    }
+
+    guard engine != nil else {
       if call.method == "hasCustomHapticsSupport" {
         result(false)
       } else {
