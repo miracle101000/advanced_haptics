@@ -46,7 +46,8 @@ android {
     }
 
     defaultConfig {
-        minSdkVersion 26
+        // Keep low so host apps are not forced to API 26; full haptics use runtime checks (API 26+) in Kotlin.
+        minSdkVersion 21
     }
 
     dependencies {

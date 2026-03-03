@@ -12,6 +12,13 @@ import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 
 class AdvancedHapticsPlugin: FlutterPlugin, MethodCallHandler {
+
+    companion object {
+        private const val MIN_SDK_OREO = Build.VERSION_CODES.O // 26
+    }
+
+    private fun hasOreoHaptics(): Boolean = Build.VERSION.SDK_INT >= MIN_SDK_OREO
+
     private lateinit var channel: MethodChannel
     private var vibrator: Vibrator? = null
     private lateinit var context: Context
@@ -26,14 +33,14 @@ class AdvancedHapticsPlugin: FlutterPlugin, MethodCallHandler {
     override fun onMethodCall(@NonNull call: MethodCall, @NonNull result: Result) {
         when (call.method) {
             "hasCustomHapticsSupport" -> {
-                val hasSupport = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val hasSupport = if (hasOreoHaptics()) {
                     vibrator?.hasAmplitudeControl() ?: false
                 } else false
                 result.success(hasSupport)
             }
 
             "playWaveform" -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (hasOreoHaptics()) {
                     val timings = call.argument<ArrayList<Int>>("timings")?.map { it.toLong() }?.toLongArray()
                     val amplitudes = call.argument<ArrayList<Int>>("amplitudes")?.toIntArray()
                     val repeat = call.argument<Int>("repeat") ?: -1
@@ -72,7 +79,7 @@ class AdvancedHapticsPlugin: FlutterPlugin, MethodCallHandler {
 
             "playAhap" -> {
                 // Fallback implementation for Android
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (hasOreoHaptics()) {
                     val effect = VibrationEffect.createWaveform(
                         longArrayOf(0, 100, 50, 100),
                         intArrayOf(0, 255, 0, 150),
@@ -86,7 +93,7 @@ class AdvancedHapticsPlugin: FlutterPlugin, MethodCallHandler {
             }
 
             "success" -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (hasOreoHaptics()) {
                     val effect = VibrationEffect.createWaveform(
                         longArrayOf(0, 50, 100, 50),
                         intArrayOf(0, 150, 0, 150),
