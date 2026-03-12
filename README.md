@@ -1,4 +1,3 @@
-
 # Advanced Haptics
 
 A Flutter plugin for playing powerful, custom haptic feedback patterns. This package provides a unified API for Android and iOS, giving developers access to fine-grained vibration control and Apple Core Haptics `.ahap` files.
@@ -178,7 +177,38 @@ await AdvancedHaptics.cancel();
 
 ---
 
-## 🙌 Contributing
+## 🙌 Contributors
+
+Thanks to these wonderful people for their contributions:
+
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/miracle101000">
+        <img src="https://github.com/miracle101000.png" width="80px;" alt="miracle101000"/><br/>
+        <sub><b>miracle101000</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/kvenn">
+        <img src="https://github.com/kvenn.png" width="80px;" alt="kvenn"/><br/>
+        <sub><b>kvenn</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/rdeekshitha-scapia">
+        <img src="https://github.com/rdeekshitha-scapia.png" width="80px;" alt="rdeekshitha-scapia"/><br/>
+        <sub><b>rdeekshitha-scapia</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/KoichiMatsudaMPL">
+        <img src="https://github.com/KoichiMatsudaMPL.png" width="80px;" alt="KoichiMatsudaMPL"/><br/>
+        <sub><b>KoichiMatsudaMPL</b></sub>
+      </a>
+    </td>
+  </tr>
+</table>
 
 We welcome issues, feature requests, and pull requests! If submitting code, please test on both Android and iOS where applicable and provide details on the devices used.
 
