@@ -21,13 +21,15 @@ A Flutter plugin for playing powerful, custom haptic feedback patterns. This pac
 
 ## 🖥 Platform Support
 
-| Feature             | Android (8.0+ / API 26+) | iOS (13.0+ / iPhone 8+) |
+| Feature             | Android (5.0+ / API 21+) | iOS (13.0+ / iPhone 8+) |
 | ------------------- | ------------------------ | ----------------------- |
-| Waveform            | ✅ Native                | ✅ Emulated             |
+| Waveform            | ✅ API 26+ / 🔁 Fallback | ✅ Emulated             |
 | `.ahap` Playback    | 🔁 Fallback              | ✅ Native               |
 | Player Controls     | ❌ N/A                   | ✅ Native               |
-| Amplitude Control   | ✅ Native                | ✅ Native               |
-| Predefined Patterns | ✅ Native + Custom       | ✅ Native               |
+| Amplitude Control   | ✅ API 26+               | ✅ Native               |
+| Predefined Patterns | ✅ API 29+               | ✅ Native               |
+
+> ℹ️ **Android note:** Amplitude control and waveform patterns require API 26 (Android 8.0 Oreo). On older devices, a simple fallback vibration is used. Predefined effects (e.g. `tick`, `click`) require API 29. Use `hasCustomHapticsSupport()` to check for full amplitude support at runtime.
 
 > ℹ️ **Note:** iPads do not support Core Haptics. Always use `hasCustomHapticsSupport()` before playing advanced patterns to ensure a good user experience.
 
@@ -35,15 +37,13 @@ A Flutter plugin for playing powerful, custom haptic feedback patterns. This pac
 
 ## 🚀 Getting Started
 
-*(This section remains the same as it covers initial setup for both platforms)*
-
 ### 1. Install
 
 Add `advanced_haptics` to your `pubspec.yaml` dependencies:
 
 ```yaml
 dependencies:
-  advanced_haptics: ^0.0.7 # Use the latest version
+  advanced_haptics: ^1.0.7 # Use the latest version
 ```
 
 Then, run `flutter pub get` in your terminal.
@@ -159,7 +159,7 @@ await AdvancedHaptics.playAhap('assets/haptics/success.ahap');
 
 #### Haptic Player Controls
 
-These methods control the state of the active `CHHapticAdvancedPatternPlayer` on iOS, which is typically started by `playAhap` or `playWaveform`. They have no effect on Android.
+These methods control the state of the active `CHHapticAdvancedPatternPlayer` on iOS, which is typically started by `playAhap` or `playWaveform`. **These have no effect on Android** — calling them on Android will return a not-implemented error, so guard with a platform check.
 
 ```dart
 // Pause the currently playing haptic pattern

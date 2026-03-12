@@ -4,6 +4,12 @@ All notable changes to `advanced_haptics` will be documented in this file.
 
 ---
 
+## 1.0.8
+Updated ReadMe
+
+
+---
+
 ## 1.0.7
 **Contributor:** [@rdeekshitha-scapia](https://github.com/rdeekshitha-scapia) — [#4](https://github.com/miracle101000/advanced_haptics/pull/4)
 
