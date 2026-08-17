@@ -4,6 +4,12 @@ All notable changes to `advanced_haptics` will be documented in this file.
 
 ---
 
+## Unreleased
+
+- **FIX:** Added support for AGP 9 built-in Kotlin while preserving compatibility with projects that still use the external Kotlin Gradle Plugin. ([#6](https://github.com/miracle101000/advanced_haptics/issues/6))
+
+---
+
 ## 1.0.8
 Updated ReadMe
 

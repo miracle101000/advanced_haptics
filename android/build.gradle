@@ -21,8 +21,15 @@ allprojects {
     }
 }
 
+// AGP 9 can still run in compatibility mode, so inspect the actual consumer property.
+def builtInKotlinEnabled = (project.findProperty('android.builtInKotlin') ?: 'false')
+        .toString()
+        .toBoolean()
+
 apply plugin: 'com.android.library'
-apply plugin: 'kotlin-android'
+if (!builtInKotlinEnabled) {
+    apply plugin: 'kotlin-android'
+}
 
 android {
     if (project.android.hasProperty("namespace")) {
@@ -36,8 +43,10 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
 
-    kotlinOptions {
-        jvmTarget = '1.8'
+    if (!builtInKotlinEnabled) {
+        kotlinOptions {
+            jvmTarget = '1.8'
+        }
     }
 
     sourceSets {
