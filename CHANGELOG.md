@@ -9,7 +9,8 @@ All notable changes to `advanced_haptics` will be documented in this file.
 Robustness release: every method is now safe to call on any platform and device.
 
 - **FIX:** `AndroidPredefinedHaptic` used wrong effect IDs (`pop`/`thud`/`ringtone1` mapped to ringtone effects). IDs now match `android.os.VibrationEffect`; added `textureTick`. Unsupported effects fall back to `click` (API 30+).
-- **FIX:** `cancel()`, `pause()`, `resume()` and `seek()` threw `MissingPluginException` on Android. They are now no-ops (`cancel()` stops the vibrator) as documented.
+- **FIX:** `cancel()`, `pause()`, `resume()` and `seek()` threw `MissingPluginException` on Android.
+- **NEW:** `pause()`, `resume()` and `seek()` now work on Android. The vibrator has no native pause, so the plugin tracks the position inside the playing waveform, cancels on pause and replays the remainder (looping included) on resume or seek. `PLAYER_NIL` is thrown when nothing is playing, matching iOS.
 - **FIX:** `stop()` and `cancel()` on iOS threw `PLAYER_NIL` when nothing was playing. They are now idempotent.
 - **FIX:** `atTime` on iOS was passed as an absolute engine time, so scheduled playback/pause/resume/stop never worked. It is now a delay in seconds from now.
 - **FIX:** iOS devices without Core Haptics (iPads, iPhone 7 and older) threw `UNSUPPORTED` on every call. They now fall back to `UIFeedbackGenerator`.

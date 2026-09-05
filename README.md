@@ -25,7 +25,7 @@ A Flutter plugin for playing powerful, custom haptic feedback patterns. This pac
 | ------------------- | ------------------------ | --------------------------------- |
 | Waveform            | ✅ API 26+ / 🔁 Fallback | ✅ Emulated (iPhone 8+) / 🔁 Fallback |
 | `.ahap` Playback    | 🔁 Fallback              | ✅ Native (iPhone 8+) / 🔁 Fallback   |
-| Player Controls     | ➖ No-op                 | ✅ Native                         |
+| Player Controls     | ✅ Emulated              | ✅ Native                         |
 | Amplitude Control   | ✅ API 26+               | ✅ Native (iPhone 8+)             |
 | Predefined Patterns | ✅ API 29+ / 🔁 Fallback | ➖ Ignored                        |
 
@@ -164,6 +164,30 @@ await AdvancedHaptics.playPredefined(AndroidPredefinedHaptic.tick);
 
 ---
 
+#### Haptic Player Controls
+
+Pause, resume and seek the pattern started by `playWaveform`, `playAhap` or `success`. On iOS these drive the `CHHapticAdvancedPatternPlayer`. Android has no native pause, so the plugin remembers where the waveform is, cancels the vibrator on pause, and replays the remainder (including the `repeat` loop) on resume or seek. Predefined Android effects cannot be paused. On iOS devices without Core Haptics the controls do nothing.
+
+`pause`, `resume` and `seek` throw a `PlatformException` with code `PLAYER_NIL` when no pattern is playing or paused; `stop` and `cancel` never do. All `atTime` values are delays in seconds from now.
+
+```dart
+await AdvancedHaptics.playWaveform([0, 400, 150, 40], [0, 255, 0, 160], repeat: 2);
+
+// Pause the currently playing haptic pattern
+await AdvancedHaptics.pause();
+
+// Resume where it left off
+await AdvancedHaptics.resume();
+
+// Jump to 0.5 seconds into the pattern
+await AdvancedHaptics.seek(offset: 0.5);
+
+// Cancel all scheduled events and stop immediately
+await AdvancedHaptics.cancel();
+```
+
+---
+
 ### 🍎 iOS Specific
 
 #### Play `.ahap` File
@@ -175,24 +199,6 @@ await AdvancedHaptics.playAhap('assets/haptics/success.ahap');
 
 // Start playback 0.5 seconds from now
 await AdvancedHaptics.playAhap('assets/haptics/success.ahap', atTime: 0.5);
-```
-
-#### Haptic Player Controls
-
-These methods control the state of the active `CHHapticAdvancedPatternPlayer` on iOS, which is started by `playAhap`, `playWaveform` or `success`. **They are no-ops on Android** and on iOS devices without Core Haptics, so no platform check is needed. `pause`, `resume` and `seek` throw a `PlatformException` with code `PLAYER_NIL` on iOS when no pattern is active; `stop` and `cancel` never do. All `atTime` values are delays in seconds from now.
-
-```dart
-// Pause the currently playing haptic pattern
-await AdvancedHaptics.pause(atTime: 0.0);
-
-// Resume a paused pattern
-await AdvancedHaptics.resume(atTime: 0.0);
-
-// Jump to 0.5 seconds into the pattern
-await AdvancedHaptics.seek(offset: 0.5);
-
-// Cancel all scheduled events and stop immediately
-await AdvancedHaptics.cancel();
 ```
 
 ---
@@ -211,7 +217,7 @@ Native failures are reported as a `PlatformException` with one of these codes:
 | `PATTERN_ERROR`        | iOS      | The waveform or `.ahap` file could not be turned into a pattern.        |
 | `FILE_NOT_FOUND`       | iOS      | The `.ahap` asset does not exist.                                       |
 | `PLAYBACK_ERROR`       | iOS      | The player could not be started.                                        |
-| `PLAYER_NIL`           | iOS      | `pause`/`resume`/`seek` called with no active pattern.                  |
+| `PLAYER_NIL`           | both     | `pause`/`resume`/`seek` called with no pattern playing or paused.       |
 | `PLAYER_CONTROL_ERROR` | iOS      | `pause`/`resume`/`seek` failed.                                         |
 
 ---

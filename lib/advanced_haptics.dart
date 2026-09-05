@@ -135,24 +135,30 @@ class AdvancedHaptics {
   // Player control methods (iOS-focused)
   // --------------------------------------------
 
-  /// Pauses the currently active haptic player.
+  /// Pauses the currently active haptic pattern.
   ///
-  /// **Platform specific:** affects the `CHHapticAdvancedPatternPlayer` on iOS
-  /// started by [playWaveform], [playAhap] or [success]. It is a no-op on
-  /// Android. On iOS a `PlatformException` with code `PLAYER_NIL` is thrown
-  /// when no player is active.
+  /// On iOS this pauses the `CHHapticAdvancedPatternPlayer` started by
+  /// [playWaveform], [playAhap] or [success]. On Android, which has no native
+  /// pause, the plugin remembers the position inside the waveform started by
+  /// [playWaveform], [playAhap] or [success] and cancels the vibrator; [resume]
+  /// replays the remainder. Predefined effects cannot be paused.
+  ///
+  /// Throws a `PlatformException` with code `PLAYER_NIL` when no pattern is
+  /// playing or paused. Pausing an already paused pattern is a no-op.
   ///
   /// [atTime] - Delay in seconds before pausing. Use `0.0` for immediate.
+  /// A delayed pause replies immediately and runs best-effort.
   static Future<void> pause({double atTime = 0.0}) async {
     _validateTime(atTime, 'atTime');
     await _platform.pause(atTime: atTime);
   }
 
-  /// Resumes a paused haptic player.
+  /// Resumes a paused haptic pattern.
   ///
-  /// **Platform specific:** iOS only; a no-op on Android. On iOS a
-  /// `PlatformException` with code `PLAYER_NIL` is thrown when no player is
-  /// active.
+  /// On Android the remainder of the paused waveform is replayed, including
+  /// its loop when it was started with `repeat`. Throws a `PlatformException`
+  /// with code `PLAYER_NIL` when no pattern is playing or paused. Resuming a
+  /// pattern that is not paused is a no-op.
   ///
   /// [atTime] - Delay in seconds before resuming. Use `0.0` for immediate.
   static Future<void> resume({double atTime = 0.0}) async {
@@ -162,9 +168,11 @@ class AdvancedHaptics {
 
   /// Seeks to a specific point in the active haptic pattern.
   ///
-  /// **Platform specific:** iOS only; a no-op on Android. On iOS a
-  /// `PlatformException` with code `PLAYER_NIL` is thrown when no player is
-  /// active.
+  /// On Android the waveform is restarted from [offset] (or, when paused, the
+  /// paused position moves there). For a repeating waveform the offset wraps
+  /// around the loop; seeking past the end of a non-repeating waveform ends it.
+  /// Throws a `PlatformException` with code `PLAYER_NIL` when no pattern is
+  /// playing or paused.
   ///
   /// [offset] - The time, in seconds, to seek to within the pattern.
   static Future<void> seek({required double offset}) async {
@@ -175,10 +183,10 @@ class AdvancedHaptics {
   /// Stops any currently playing haptic pattern.
   ///
   /// Safe to call when nothing is playing. On iOS, this stops the active
-  /// `CHHapticAdvancedPatternPlayer`. On Android, this cancels the `Vibrator`.
+  /// `CHHapticAdvancedPatternPlayer`. On Android, this cancels the `Vibrator`
+  /// and forgets any paused pattern.
   ///
-  /// [atTime] - (iOS only) Delay in seconds before stopping. Use `0.0` for
-  /// immediate.
+  /// [atTime] - Delay in seconds before stopping. Use `0.0` for immediate.
   static Future<void> stop({double atTime = 0.0}) async {
     _validateTime(atTime, 'atTime');
     await _platform.stop(atTime: atTime);

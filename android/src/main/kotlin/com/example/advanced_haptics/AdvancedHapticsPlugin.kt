@@ -2,6 +2,9 @@ package com.example.advanced_haptics
 
 import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -21,6 +24,11 @@ import io.flutter.plugin.common.MethodChannel.Result
  * a `PlatformException` with a descriptive code, and nothing here can crash
  * the host app. Amplitude control needs API 26; older devices play the on/off
  * shape of the pattern through the legacy `Vibrator` API.
+ *
+ * `Vibrator` has no notion of pausing, so the Core Haptics style player
+ * controls are emulated: the plugin remembers the waveform that is playing and
+ * when it started, cancels the vibrator on pause, and replays the remainder of
+ * the pattern (honouring `repeat`) on resume or seek.
  */
 class AdvancedHapticsPlugin : FlutterPlugin, MethodCallHandler {
 
@@ -30,6 +38,8 @@ class AdvancedHapticsPlugin : FlutterPlugin, MethodCallHandler {
         const val ERROR_INVALID_ARGS = "INVALID_ARGS"
         const val ERROR_VIBRATION = "VIBRATION_ERROR"
         const val ERROR_PERMISSION = "PERMISSION_DENIED"
+        const val ERROR_PLAYER_NIL = "PLAYER_NIL"
+        private const val NO_PLAYER_MESSAGE = "No haptic pattern is currently playing."
 
         private const val MAX_AMPLITUDE = 255
         private const val NO_REPEAT = -1
@@ -110,11 +120,92 @@ class AdvancedHapticsPlugin : FlutterPlugin, MethodCallHandler {
         private fun isKnownEffect(effectId: Int): Boolean = effectId in EFFECT_CLICK..EFFECT_TEXTURE_TICK
     }
 
+    /**
+     * A waveform plus the arithmetic needed to pause, resume and seek it.
+     */
+    internal class Waveform(val timings: LongArray, val amplitudes: IntArray, val repeat: Int) {
+        val totalMs: Long = timings.sum()
+        private val loopsFromIndex: Boolean = repeat in timings.indices
+        val introMs: Long = if (loopsFromIndex) timings.take(repeat).sum() else totalMs
+        val loopMs: Long = if (loopsFromIndex) totalMs - introMs else 0L
+        val loops: Boolean = loopsFromIndex && loopMs > 0
+
+        /**
+         * Maps an elapsed play time onto a position inside the pattern,
+         * wrapping around the loop. Returns `null` once a non-looping
+         * pattern has finished.
+         */
+        fun positionAt(elapsedMs: Long): Long? {
+            val elapsed = elapsedMs.coerceAtLeast(0)
+            if (elapsed < totalMs) return elapsed
+            if (!loops) return null
+            return introMs + (elapsed - introMs) % loopMs
+        }
+
+        /**
+         * The part of the pattern that remains after [offsetMs], including
+         * the loop when the pattern repeats. Returns `null` when nothing
+         * remains.
+         */
+        fun sliceFrom(offsetMs: Long): Waveform? {
+            val position = positionAt(offsetMs) ?: return null
+            // Find the segment containing the position and how much of it is left.
+            var index = 0
+            var accumulated = 0L
+            while (index < timings.size && position >= accumulated + timings[index]) {
+                accumulated += timings[index]
+                index++
+            }
+            if (index >= timings.size) return null
+            val partial = accumulated + timings[index] - position
+
+            val newTimings = ArrayList<Long>()
+            val newAmplitudes = ArrayList<Int>()
+            newTimings.add(partial)
+            newAmplitudes.add(amplitudes[index])
+            for (i in index + 1 until timings.size) {
+                newTimings.add(timings[i])
+                newAmplitudes.add(amplitudes[i])
+            }
+            var newRepeat = NO_REPEAT
+            if (loops) {
+                if (index < repeat) {
+                    // Still in the intro: the loop segments are already appended.
+                    newRepeat = 1 + (repeat - (index + 1))
+                } else {
+                    // Inside the loop: finish this pass, then loop the full loop body.
+                    newRepeat = newTimings.size
+                    for (i in repeat until timings.size) {
+                        newTimings.add(timings[i])
+                        newAmplitudes.add(amplitudes[i])
+                    }
+                }
+            }
+            return Waveform(newTimings.toLongArray(), newAmplitudes.toIntArray(), newRepeat)
+        }
+    }
+
     private var channel: MethodChannel? = null
 
     /** The vibrator to drive, or `null` when the device has none. */
     @VisibleForTesting
     internal var vibrator: Vibrator? = null
+
+    /** Monotonic clock in milliseconds; replaceable in unit tests. */
+    @VisibleForTesting
+    internal var clock: () -> Long = { SystemClock.uptimeMillis() }
+
+    // --- Emulated player state ---------------------------------------------
+    private var active: Waveform? = null
+    /** [clock] value when the current run of [active] started. */
+    private var runStartMs = 0L
+    /** Position inside [active] at which the current run started. */
+    private var runOffsetMs = 0L
+    /** Position inside [active] while paused, `null` while playing. */
+    private var pausedAtMs: Long? = null
+
+    private val handler: Handler by lazy { Handler(Looper.getMainLooper()) }
+    private val scheduled = ArrayList<Runnable>()
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         vibrator = resolveVibrator(binding.applicationContext)
@@ -127,6 +218,9 @@ class AdvancedHapticsPlugin : FlutterPlugin, MethodCallHandler {
         channel?.setMethodCallHandler(null)
         channel = null
         // A repeating waveform would otherwise outlive the Flutter engine.
+        clearScheduled()
+        active = null
+        pausedAtMs = null
         try {
             vibrator?.cancel()
         } catch (_: Exception) {
@@ -154,9 +248,14 @@ class AdvancedHapticsPlugin : FlutterPlugin, MethodCallHandler {
             "playPredefined" -> playPredefined(call, result)
             "playAhap" -> vibrateWaveform(AHAP_FALLBACK_TIMINGS, AHAP_FALLBACK_AMPLITUDES, NO_REPEAT, result)
             "success" -> vibrateWaveform(SUCCESS_TIMINGS, SUCCESS_AMPLITUDES, NO_REPEAT, result)
-            "stop", "cancel" -> runVibration(result) { it.cancel() }
-            // Player controls are Core Haptics concepts; documented as no-ops on Android.
-            "pause", "resume", "seek" -> result.success(null)
+            "stop" -> stop(call.delayMs("atTime"), result)
+            "cancel" -> stop(0L, result)
+            "pause" -> playerControl(result, call.delayMs("atTime")) { pauseNow(it) }
+            "resume" -> playerControl(result, call.delayMs("atTime")) { resumeNow(it) }
+            "seek" -> {
+                val offsetMs = call.delayMs("offset")
+                playerControl(result, 0L) { seekNow(it, offsetMs) }
+            }
             else -> result.notImplemented()
         }
     }
@@ -190,20 +289,159 @@ class AdvancedHapticsPlugin : FlutterPlugin, MethodCallHandler {
     }
 
     private fun vibrateWaveform(timings: LongArray, amplitudes: IntArray, repeat: Int, result: Result) {
+        clearScheduled()
+        active = null
+        pausedAtMs = null
         // Nothing to play: succeed without touching the hardware (matches iOS).
         if (timings.all { it == 0L }) {
             result.success(null)
             return
         }
+        val wave = Waveform(timings, amplitudes, repeat)
         runVibration(result) { vib ->
-            if (hasOreoHaptics()) {
-                vib.vibrate(VibrationEffect.createWaveform(timings, amplitudes, repeat))
-            } else {
-                val (pattern, legacyRepeat) = toLegacyPattern(timings, amplitudes, repeat)
-                @Suppress("DEPRECATION")
-                vib.vibrate(pattern, legacyRepeat)
+            vibrateRaw(vib, wave)
+            active = wave
+            runStartMs = clock()
+            runOffsetMs = 0L
+        }
+    }
+
+    /** Sends [wave] to the hardware without touching the player state. */
+    private fun vibrateRaw(vib: Vibrator, wave: Waveform) {
+        if (hasOreoHaptics()) {
+            vib.vibrate(VibrationEffect.createWaveform(wave.timings, wave.amplitudes, wave.repeat))
+        } else {
+            val (pattern, legacyRepeat) = toLegacyPattern(wave.timings, wave.amplitudes, wave.repeat)
+            @Suppress("DEPRECATION")
+            vib.vibrate(pattern, legacyRepeat)
+        }
+    }
+
+    // --- Emulated player controls ------------------------------------------
+
+    /** The current position inside [active], or `null` when nothing is playing or paused. */
+    private fun currentPosition(): Long? {
+        val wave = active ?: return null
+        pausedAtMs?.let { return it }
+        val position = wave.positionAt(runOffsetMs + (clock() - runStartMs))
+        if (position == null) {
+            // A non-looping pattern has run to completion.
+            active = null
+        }
+        return position
+    }
+
+    /**
+     * Validates that a pattern is active, then runs [action] now or after
+     * [delayMs]. A delayed action replies immediately and runs best-effort.
+     */
+    private fun playerControl(result: Result, delayMs: Long, action: (Vibrator) -> Unit) {
+        if (currentPosition() == null) {
+            result.error(ERROR_PLAYER_NIL, NO_PLAYER_MESSAGE, null)
+            return
+        }
+        if (delayMs <= 0) {
+            runVibration(result) { action(it) }
+            return
+        }
+        schedule(delayMs) {
+            val vib = vibrator ?: return@schedule
+            try {
+                action(vib)
+            } catch (_: Exception) {
+                // Scheduled controls are best-effort; the reply was already sent.
             }
         }
+        result.success(null)
+    }
+
+    private fun pauseNow(vib: Vibrator) {
+        if (pausedAtMs != null) return // Already paused.
+        val position = currentPosition() ?: return
+        pausedAtMs = position
+        vib.cancel()
+    }
+
+    private fun resumeNow(vib: Vibrator) {
+        val wave = active ?: return
+        val position = pausedAtMs ?: return // Not paused: nothing to do.
+        val remainder = wave.sliceFrom(position)
+        if (remainder == null) {
+            active = null
+            pausedAtMs = null
+            return
+        }
+        vibrateRaw(vib, remainder)
+        runStartMs = clock()
+        runOffsetMs = position
+        pausedAtMs = null
+    }
+
+    private fun seekNow(vib: Vibrator, offsetMs: Long) {
+        val wave = active ?: return
+        val position = wave.positionAt(offsetMs)
+        if (position == null) {
+            // Seeking past the end of a non-looping pattern ends it.
+            vib.cancel()
+            active = null
+            pausedAtMs = null
+            return
+        }
+        if (pausedAtMs != null) {
+            pausedAtMs = position
+            return
+        }
+        vib.cancel()
+        val remainder = wave.sliceFrom(position)
+        if (remainder == null) {
+            active = null
+            return
+        }
+        vibrateRaw(vib, remainder)
+        runStartMs = clock()
+        runOffsetMs = position
+    }
+
+    private fun stop(delayMs: Long, result: Result) {
+        if (delayMs > 0) {
+            schedule(delayMs) { stopNow() }
+            result.success(null)
+            return
+        }
+        clearScheduled()
+        active = null
+        pausedAtMs = null
+        runVibration(result) { it.cancel() }
+    }
+
+    private fun stopNow() {
+        clearScheduled()
+        active = null
+        pausedAtMs = null
+        try {
+            vibrator?.cancel()
+        } catch (_: Exception) {
+            // Best-effort; the reply was already sent.
+        }
+    }
+
+    private fun schedule(delayMs: Long, action: () -> Unit) {
+        val runnable = object : Runnable {
+            override fun run() {
+                scheduled.remove(this)
+                action()
+            }
+        }
+        scheduled.add(runnable)
+        handler.postDelayed(runnable, delayMs)
+    }
+
+    private fun clearScheduled() {
+        if (scheduled.isEmpty()) return
+        for (runnable in scheduled) {
+            handler.removeCallbacks(runnable)
+        }
+        scheduled.clear()
     }
 
     private fun playPredefined(call: MethodCall, result: Result) {
@@ -264,6 +502,13 @@ class AdvancedHapticsPlugin : FlutterPlugin, MethodCallHandler {
     }
 
     private fun MethodCall.int(key: String): Int? = (arg(key) as? Number)?.toInt()
+
+    /** Reads a duration given in seconds as non-negative milliseconds (0 when absent or invalid). */
+    private fun MethodCall.delayMs(key: String): Long {
+        val seconds = (arg(key) as? Number)?.toDouble() ?: return 0L
+        if (seconds.isNaN() || seconds.isInfinite() || seconds <= 0) return 0L
+        return (seconds * 1000).toLong()
+    }
 
     private fun MethodCall.numberList(key: String): List<Number>? {
         val raw = arg(key) as? List<*> ?: return null

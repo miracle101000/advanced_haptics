@@ -72,7 +72,6 @@ class _HapticsDemoPageState extends State<HapticsDemoPage> {
   @override
   Widget build(BuildContext context) {
     final isAndroid = defaultTargetPlatform == TargetPlatform.android;
-    final isIOS = defaultTargetPlatform == TargetPlatform.iOS;
     final support = _hasSupport;
 
     return Scaffold(
@@ -166,9 +165,8 @@ class _HapticsDemoPageState extends State<HapticsDemoPage> {
                   ),
               ],
             ),
-          if (isIOS)
-            _Section(
-              title: 'iOS player controls',
+          _Section(
+              title: 'Player controls',
               children: [
                 _button('Pause', () => AdvancedHaptics.pause()),
                 _button('Resume', () => AdvancedHaptics.resume()),

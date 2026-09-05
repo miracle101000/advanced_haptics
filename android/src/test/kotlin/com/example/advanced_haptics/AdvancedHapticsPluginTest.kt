@@ -24,8 +24,12 @@ import org.mockito.Mockito.verifyNoInteractions
  */
 internal class AdvancedHapticsPluginTest {
 
+    // SystemClock is not available on the JVM, so every plugin gets a fake clock.
     private fun pluginWith(vibrator: Vibrator?): AdvancedHapticsPlugin =
-        AdvancedHapticsPlugin().apply { this.vibrator = vibrator }
+        AdvancedHapticsPlugin().apply {
+            this.vibrator = vibrator
+            this.clock = { 1_000L }
+        }
 
     private fun mockVibrator(): Vibrator = Mockito.mock(Vibrator::class.java)
 
@@ -231,15 +235,184 @@ internal class AdvancedHapticsPluginTest {
     }
 
     @Test
-    fun playerControls_areNoOps() {
+    fun playerControls_withoutPattern_arePlayerNil() {
         val vibrator = mockVibrator()
         val plugin = pluginWith(vibrator)
         for (method in listOf("pause", "resume", "seek")) {
             val result = mockResult()
             plugin.onMethodCall(MethodCall(method, mapOf("atTime" to 0.0, "offset" to 0.0)), result)
-            verify(result).success(null)
+            verify(result).error(eq(AdvancedHapticsPlugin.ERROR_PLAYER_NIL), any(), any())
         }
         verifyNoInteractions(vibrator)
+    }
+
+    // --- Emulated player controls ---------------------------------------
+
+    private class FakeClock(var nowMs: Long = 1_000L)
+
+    private fun pluginWithClock(vibrator: Vibrator, clock: FakeClock): AdvancedHapticsPlugin =
+        pluginWith(vibrator).apply { this.clock = { clock.nowMs } }
+
+    private fun call(method: String, vararg args: Pair<String, Any?>): MethodCall =
+        MethodCall(method, mapOf(*args))
+
+    @Test
+    fun pause_withoutActivePattern_isPlayerNil() {
+        val vibrator = mockVibrator()
+        val result = mockResult()
+        pluginWith(vibrator).onMethodCall(call("pause", "atTime" to 0.0), result)
+        verify(result).error(eq(AdvancedHapticsPlugin.ERROR_PLAYER_NIL), any(), any())
+        verifyNoInteractions(vibrator)
+    }
+
+    @Test
+    fun pause_afterNonLoopingPatternFinished_isPlayerNil() {
+        val vibrator = mockVibrator()
+        val clock = FakeClock()
+        val plugin = pluginWithClock(vibrator, clock)
+        plugin.onMethodCall(waveformCall(listOf(0, 100, 200, 300), listOf(0, 150, 0, 255)), mockResult())
+        clock.nowMs += 600
+        val result = mockResult()
+        plugin.onMethodCall(call("pause", "atTime" to 0.0), result)
+        verify(result).error(eq(AdvancedHapticsPlugin.ERROR_PLAYER_NIL), any(), any())
+        verify(vibrator, never()).cancel()
+    }
+
+    @Test
+    fun pauseThenResume_replaysRemainderOfPattern() {
+        val vibrator = mockVibrator()
+        val clock = FakeClock()
+        val plugin = pluginWithClock(vibrator, clock)
+        plugin.onMethodCall(waveformCall(listOf(0, 100, 200, 300), listOf(0, 150, 0, 255)), mockResult())
+        clock.nowMs += 150
+
+        val pauseResult = mockResult()
+        plugin.onMethodCall(call("pause", "atTime" to 0.0), pauseResult)
+        verify(vibrator).cancel()
+        verify(pauseResult).success(null)
+
+        clock.nowMs += 5_000 // Time passes while paused; the position must not advance.
+        val resumeResult = mockResult()
+        plugin.onMethodCall(call("resume", "atTime" to 0.0), resumeResult)
+        // 150 ms into the pattern: 150 ms of the 200 ms pause remain, then the 300 ms buzz.
+        @Suppress("DEPRECATION")
+        verify(vibrator).vibrate(longArrayOf(150, 300), -1)
+        verify(resumeResult).success(null)
+    }
+
+    @Test
+    fun resume_whenNotPaused_isNoOp() {
+        val vibrator = mockVibrator()
+        val clock = FakeClock()
+        val plugin = pluginWithClock(vibrator, clock)
+        plugin.onMethodCall(waveformCall(listOf(0, 100, 200, 300), listOf(0, 150, 0, 255)), mockResult())
+        clock.nowMs += 50
+        val result = mockResult()
+        plugin.onMethodCall(call("resume", "atTime" to 0.0), result)
+        verify(result).success(null)
+        @Suppress("DEPRECATION")
+        verify(vibrator, Mockito.times(1)).vibrate(any(LongArray::class.java), anyInt())
+        verify(vibrator, never()).cancel()
+    }
+
+    @Test
+    fun seek_whilePlaying_restartsFromOffset() {
+        val vibrator = mockVibrator()
+        val clock = FakeClock()
+        val plugin = pluginWithClock(vibrator, clock)
+        plugin.onMethodCall(waveformCall(listOf(0, 100, 200, 300), listOf(0, 150, 0, 255)), mockResult())
+        clock.nowMs += 20
+        val result = mockResult()
+        plugin.onMethodCall(call("seek", "offset" to 0.25), result)
+        verify(vibrator).cancel()
+        // 250 ms in: 50 ms of the pause remain, then the 300 ms buzz.
+        @Suppress("DEPRECATION")
+        verify(vibrator).vibrate(longArrayOf(50, 300), -1)
+        verify(result).success(null)
+    }
+
+    @Test
+    fun seek_pastEndOfNonLoopingPattern_endsPlayback() {
+        val vibrator = mockVibrator()
+        val clock = FakeClock()
+        val plugin = pluginWithClock(vibrator, clock)
+        plugin.onMethodCall(waveformCall(listOf(0, 100), listOf(0, 255)), mockResult())
+        plugin.onMethodCall(call("seek", "offset" to 5.0), mockResult())
+        verify(vibrator).cancel()
+        val result = mockResult()
+        plugin.onMethodCall(call("pause", "atTime" to 0.0), result)
+        verify(result).error(eq(AdvancedHapticsPlugin.ERROR_PLAYER_NIL), any(), any())
+    }
+
+    @Test
+    fun seek_whilePaused_onlyMovesPosition() {
+        val vibrator = mockVibrator()
+        val clock = FakeClock()
+        val plugin = pluginWithClock(vibrator, clock)
+        plugin.onMethodCall(waveformCall(listOf(0, 100, 200, 300), listOf(0, 150, 0, 255)), mockResult())
+        plugin.onMethodCall(call("pause", "atTime" to 0.0), mockResult())
+        plugin.onMethodCall(call("seek", "offset" to 0.4), mockResult())
+        plugin.onMethodCall(call("resume", "atTime" to 0.0), mockResult())
+        // Resumed at 400 ms: 200 ms of the final buzz remain.
+        @Suppress("DEPRECATION")
+        verify(vibrator).vibrate(longArrayOf(0, 200), -1)
+    }
+
+    @Test
+    fun pauseThenResume_loopingPattern_wrapsPositionAndKeepsLooping() {
+        val vibrator = mockVibrator()
+        val clock = FakeClock()
+        val plugin = pluginWithClock(vibrator, clock)
+        // 400 ms buzz, then loop [150 off, 40 on] forever.
+        plugin.onMethodCall(
+            waveformCall(listOf(0, 400, 150, 40), listOf(0, 255, 0, 160), repeat = 2),
+            mockResult()
+        )
+        clock.nowMs += 400 + 190 + 50 // One full loop pass plus 50 ms into the next.
+        plugin.onMethodCall(call("pause", "atTime" to 0.0), mockResult())
+        plugin.onMethodCall(call("resume", "atTime" to 0.0), mockResult())
+        // 100 ms of the pause remain, the 40 ms tick, then the full loop body repeats from index 2.
+        @Suppress("DEPRECATION")
+        verify(vibrator).vibrate(longArrayOf(100, 40, 150, 40), 2)
+    }
+
+    @Test
+    fun stop_clearsPlayerState() {
+        val vibrator = mockVibrator()
+        val clock = FakeClock()
+        val plugin = pluginWithClock(vibrator, clock)
+        plugin.onMethodCall(waveformCall(listOf(0, 100, 200, 300), listOf(0, 150, 0, 255)), mockResult())
+        plugin.onMethodCall(call("stop", "atTime" to 0.0), mockResult())
+        val result = mockResult()
+        plugin.onMethodCall(call("resume", "atTime" to 0.0), result)
+        verify(result).error(eq(AdvancedHapticsPlugin.ERROR_PLAYER_NIL), any(), any())
+    }
+
+    @Test
+    fun waveform_positionAt_wrapsInsideLoop() {
+        val wave = AdvancedHapticsPlugin.Waveform(longArrayOf(0, 400, 150, 40), intArrayOf(0, 255, 0, 160), 2)
+        assertEquals(400L, wave.introMs)
+        assertEquals(190L, wave.loopMs)
+        assertEquals(50L, wave.positionAt(50))
+        assertEquals(400L, wave.positionAt(590))
+        assertEquals(450L, wave.positionAt(640))
+    }
+
+    @Test
+    fun waveform_positionAt_isNullAfterNonLoopingEnd() {
+        val wave = AdvancedHapticsPlugin.Waveform(longArrayOf(0, 100), intArrayOf(0, 255), -1)
+        assertEquals(100L, wave.totalMs)
+        assertEquals(null, wave.positionAt(100))
+        assertEquals(99L, wave.positionAt(99))
+    }
+
+    @Test
+    fun waveform_sliceFrom_insideIntroKeepsLoopIndex() {
+        val wave = AdvancedHapticsPlugin.Waveform(longArrayOf(0, 400, 150, 40), intArrayOf(0, 255, 0, 160), 2)
+        val slice = wave.sliceFrom(100)!!
+        assertContentEquals(longArrayOf(300, 150, 40), slice.timings)
+        assertContentEquals(intArrayOf(255, 0, 160), slice.amplitudes)
+        assertEquals(1, slice.repeat)
     }
 
     @Test
