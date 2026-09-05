@@ -21,17 +21,19 @@ A Flutter plugin for playing powerful, custom haptic feedback patterns. This pac
 
 ## 🖥 Platform Support
 
-| Feature             | Android (5.0+ / API 21+) | iOS (13.0+ / iPhone 8+) |
-| ------------------- | ------------------------ | ----------------------- |
-| Waveform            | ✅ API 26+ / 🔁 Fallback | ✅ Emulated             |
-| `.ahap` Playback    | 🔁 Fallback              | ✅ Native               |
-| Player Controls     | ❌ N/A                   | ✅ Native               |
-| Amplitude Control   | ✅ API 26+               | ✅ Native               |
-| Predefined Patterns | ✅ API 29+               | ✅ Native               |
+| Feature             | Android (5.0+ / API 21+) | iOS (13.0+)                       |
+| ------------------- | ------------------------ | --------------------------------- |
+| Waveform            | ✅ API 26+ / 🔁 Fallback | ✅ Emulated (iPhone 8+) / 🔁 Fallback |
+| `.ahap` Playback    | 🔁 Fallback              | ✅ Native (iPhone 8+) / 🔁 Fallback   |
+| Player Controls     | ➖ No-op                 | ✅ Native                         |
+| Amplitude Control   | ✅ API 26+               | ✅ Native (iPhone 8+)             |
+| Predefined Patterns | ✅ API 29+ / 🔁 Fallback | ➖ Ignored                        |
 
-> ℹ️ **Android note:** Amplitude control and waveform patterns require API 26 (Android 8.0 Oreo). On older devices, a simple fallback vibration is used. Predefined effects (e.g. `tick`, `click`) require API 29. Use `hasCustomHapticsSupport()` to check for full amplitude support at runtime.
+> ℹ️ **Android note:** Amplitude control requires API 26 (Android 8.0 Oreo). On older devices the on/off shape of the pattern is played through the legacy vibrator API. Predefined effects (e.g. `tick`, `click`) require API 29; older devices play a short approximation. Use `hasCustomHapticsSupport()` to check for full amplitude support at runtime.
 
-> ℹ️ **Note:** iPads do not support Core Haptics. Always use `hasCustomHapticsSupport()` before playing advanced patterns to ensure a good user experience.
+> ℹ️ **iOS note:** iPads and iPhones older than the iPhone 8 do not support Core Haptics. On those devices the plugin falls back to `UIFeedbackGenerator` taps, and the player controls do nothing. Use `hasCustomHapticsSupport()` when you need to know whether the full pattern will be played.
+
+> 🛡️ **Safety:** Every method can be called on any platform. Web and desktop (no native implementation), devices without a vibrator, and unsupported hardware silently do nothing. Invalid arguments throw an `ArgumentError`; native failures surface as a `PlatformException` (see [Error codes](#-error-codes)).
 
 ---
 
@@ -43,7 +45,7 @@ Add `advanced_haptics` to your `pubspec.yaml` dependencies:
 
 ```yaml
 dependencies:
-  advanced_haptics: ^1.0.7 # Use the latest version
+  advanced_haptics: ^1.0.9 # Use the latest version
 ```
 
 Then, run `flutter pub get` in your terminal.
@@ -62,6 +64,8 @@ Add the `VIBRATE` permission to your `android/app/src/main/AndroidManifest.xml`:
 ```
 
 ### 3. iOS Setup
+
+The plugin requires iOS 13.0 or newer (`platform :ios, '13.0'` in your `Podfile` / the Runner deployment target). It ships both a Swift package (used automatically when Swift Package Manager is enabled, the default since Flutter 3.44) and a podspec for CocoaPods; no configuration is needed for either.
 
 To play custom patterns on iOS, add your `.ahap` files to your project assets (e.g., under an `assets/haptics/` folder) and declare the folder in your `pubspec.yaml`:
 
@@ -108,10 +112,10 @@ await AdvancedHaptics.error();
 
 #### 🛑 Stop All Vibrations
 
-Immediately cancels any ongoing haptic effect on either platform.
+Cancels any ongoing haptic effect on either platform. Safe to call when nothing is playing.
 
 ```dart
-///atTime for iOS only
+// atTime (iOS only): delay in seconds before stopping. 0.0 stops immediately.
 await AdvancedHaptics.stop(atTime: 0.0);
 ```
 
@@ -128,13 +132,26 @@ These methods expose powerful, native-only features. Check for platform or use `
 Design unique patterns with precise control over timings (in milliseconds), amplitudes (0-255), and an optional repeat index. While this is emulated on iOS, it provides the most granular control on Android.
 
 ```dart
-// Plays a pattern, with no repeat
+// Plays a pattern once
 await AdvancedHaptics.playWaveform(
   [0, 100, 100, 200],     // Timings: [delay, on, off, on]
   [0, 180, 0, 255],       // Amplitudes for each segment
-  repeat: -1              // -1 means no repeat
+  repeat: -1,             // -1 (default) means no repeat
 );
+
+// Loops from index 2 until stop() is called
+await AdvancedHaptics.playWaveform(
+  [0, 500, 100, 50],
+  [0, 255, 0, 120],
+  repeat: 2,
+);
+await Future.delayed(const Duration(seconds: 3));
+await AdvancedHaptics.stop();
 ```
+
+Both lists must be non-empty and of equal length, timings must be non-negative, amplitudes must be within 0-255, and `repeat` must be `-1` or a valid index; otherwise an `ArgumentError` is thrown before anything reaches the platform.
+
+> On iOS the whole pattern loops when `repeat` is not `-1` (Core Haptics has no loop start point). Segments shorter than 40 ms are rendered as crisp transient taps.
 
 #### Native Android Effects (API 29+)
 
@@ -143,7 +160,7 @@ Play Android's built-in system haptic effects using an enum. This has no effect 
 ```dart
 await AdvancedHaptics.playPredefined(AndroidPredefinedHaptic.tick);
 ```
-*Available enums: `click`, `doubleClick`, `tick`, `heavyClick`, `pop`, `thud`, `ringtone1`.*
+*Available enums: `click`, `doubleClick`, `tick`, `heavyClick` (public, always available on API 29+) and `thud`, `pop`, `ringtone1`, `textureTick` (non-public effect IDs whose support varies by device; unsupported ones fall back to `click` on API 30+).*
 
 ---
 
@@ -151,15 +168,18 @@ await AdvancedHaptics.playPredefined(AndroidPredefinedHaptic.tick);
 
 #### Play `.ahap` File
 
-Trigger your custom-designed haptic experiences on supported iPhones. This is the highest-fidelity way to play haptics on iOS.
+Trigger your custom-designed haptic experiences on supported iPhones. This is the highest-fidelity way to play haptics on iOS. The path is a Flutter asset path declared in `pubspec.yaml`, or an absolute file-system path (e.g. a downloaded file).
 
 ```dart
 await AdvancedHaptics.playAhap('assets/haptics/success.ahap');
+
+// Start playback 0.5 seconds from now
+await AdvancedHaptics.playAhap('assets/haptics/success.ahap', atTime: 0.5);
 ```
 
 #### Haptic Player Controls
 
-These methods control the state of the active `CHHapticAdvancedPatternPlayer` on iOS, which is typically started by `playAhap` or `playWaveform`. **These have no effect on Android** — calling them on Android will return a not-implemented error, so guard with a platform check.
+These methods control the state of the active `CHHapticAdvancedPatternPlayer` on iOS, which is started by `playAhap`, `playWaveform` or `success`. **They are no-ops on Android** and on iOS devices without Core Haptics, so no platform check is needed. `pause`, `resume` and `seek` throw a `PlatformException` with code `PLAYER_NIL` on iOS when no pattern is active; `stop` and `cancel` never do. All `atTime` values are delays in seconds from now.
 
 ```dart
 // Pause the currently playing haptic pattern
@@ -174,6 +194,58 @@ await AdvancedHaptics.seek(offset: 0.5);
 // Cancel all scheduled events and stop immediately
 await AdvancedHaptics.cancel();
 ```
+
+---
+
+### ⚠️ Error codes
+
+Native failures are reported as a `PlatformException` with one of these codes:
+
+| Code                   | Platform | Meaning                                                                 |
+| ---------------------- | -------- | ----------------------------------------------------------------------- |
+| `INVALID_ARGS`         | both     | Arguments rejected by the native side.                                  |
+| `PERMISSION_DENIED`    | Android  | `android.permission.VIBRATE` is missing from the manifest.              |
+| `VIBRATION_ERROR`      | Android  | The vibrator service failed.                                            |
+| `ENGINE_NIL`           | iOS      | The Core Haptics engine could not be created.                           |
+| `ENGINE_START_FAILED`  | iOS      | The engine could not be (re)started, e.g. while the app is in the background. |
+| `PATTERN_ERROR`        | iOS      | The waveform or `.ahap` file could not be turned into a pattern.        |
+| `FILE_NOT_FOUND`       | iOS      | The `.ahap` asset does not exist.                                       |
+| `PLAYBACK_ERROR`       | iOS      | The player could not be started.                                        |
+| `PLAYER_NIL`           | iOS      | `pause`/`resume`/`seek` called with no active pattern.                  |
+| `PLAYER_CONTROL_ERROR` | iOS      | `pause`/`resume`/`seek` failed.                                         |
+
+---
+
+### 🧪 Testing
+
+`AdvancedHaptics` delegates to `AdvancedHapticsPlatform.instance`, so tests can swap in a fake to record or silence haptic calls:
+
+```dart
+import 'package:advanced_haptics/advanced_haptics.dart';
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+
+class FakeHaptics extends AdvancedHapticsPlatform with MockPlatformInterfaceMixin {
+  final calls = <String>[];
+
+  @override
+  Future<bool> hasCustomHapticsSupport() async => true;
+
+  @override
+  Future<void> playWaveform({
+    required List<int> timings,
+    required List<int> amplitudes,
+    int repeat = -1,
+    double atTime = 0.0,
+  }) async => calls.add('playWaveform');
+  // Override the other methods you care about; the defaults throw UnimplementedError.
+}
+
+void main() {
+  setUp(() => AdvancedHapticsPlatform.instance = FakeHaptics());
+}
+```
+
+Without a fake, the plugin is still safe in `flutter test`: with no native implementation every call is a no-op and `hasCustomHapticsSupport()` returns `false`.
 
 ---
 

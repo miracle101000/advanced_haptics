@@ -4,6 +4,31 @@ All notable changes to `advanced_haptics` will be documented in this file.
 
 ---
 
+## 1.0.9
+
+Robustness release: every method is now safe to call on any platform and device.
+
+- **FIX:** `AndroidPredefinedHaptic` used wrong effect IDs (`pop`/`thud`/`ringtone1` mapped to ringtone effects). IDs now match `android.os.VibrationEffect`; added `textureTick`. Unsupported effects fall back to `click` (API 30+).
+- **FIX:** `cancel()`, `pause()`, `resume()` and `seek()` threw `MissingPluginException` on Android. They are now no-ops (`cancel()` stops the vibrator) as documented.
+- **FIX:** `stop()` and `cancel()` on iOS threw `PLAYER_NIL` when nothing was playing. They are now idempotent.
+- **FIX:** `atTime` on iOS was passed as an absolute engine time, so scheduled playback/pause/resume/stop never worked. It is now a delay in seconds from now.
+- **FIX:** iOS devices without Core Haptics (iPads, iPhone 7 and older) threw `UNSUPPORTED` on every call. They now fall back to `UIFeedbackGenerator`.
+- **FIX:** iOS engine reset/stop handlers mutated state off the main thread, and a stale player could block new playback after an engine reset.
+- **FIX:** Repeating waveforms on iOS ignored trailing silence (`loopEnd` was never set).
+- **FIX:** Android crashed with `ClassCastException` when timings exceeded 32 bits, and `SecurityException` (missing `VIBRATE` permission) was not caught.
+- **FIX:** `hasCustomHapticsSupport()` could throw on platforms without a native implementation or when the native side returned `null`.
+- **NEW:** `playWaveform(repeat: ...)` is now a real parameter (it was documented but ignored).
+- **NEW:** Dart-side argument validation with clear `ArgumentError`s (empty lists, mismatched lengths, negative timings, amplitudes outside 0-255, bad `repeat`, negative times).
+- **NEW:** Android below API 26 plays the on/off shape of a waveform (previously a fixed 200 ms buzz); `playPredefined` plays an approximation below API 29 instead of erroring. Uses `VibratorManager` on API 31+.
+- **NEW:** Very short iOS waveform segments (< 40 ms) are rendered as transient taps, which are far more perceptible.
+- **NEW:** `playAhap` accepts absolute file paths in addition to Flutter asset paths.
+- **NEW:** `AdvancedHapticsPlatform` is now a real platform interface: replace `AdvancedHapticsPlatform.instance` with a mock in tests.
+- **NEW:** iOS sources ship as a Swift package (`ios/advanced_haptics/Package.swift`) with a privacy manifest, so apps built with Swift Package Manager (default since Flutter 3.44) no longer fall back to CocoaPods. The podspec is kept for CocoaPods users.
+- **CHORE:** Real Dart and Kotlin unit tests; podspec metadata; plugin `build.gradle` moved to Java 17 / `compileSdk 36` and no longer double-applies the Kotlin plugin under AGP 9.
+- **CHORE:** Example app modernised: Gradle 9.1 / AGP 9.0.1 / Kotlin 2.3.20 (it could not build on the JDK current Flutter uses), iOS deployment target 13.0 (the podspec minimum), error reporting in the UI, demos for looping waveforms, predefined effects and player controls.
+
+---
+
 ## 1.0.8
 Updated ReadMe
 
