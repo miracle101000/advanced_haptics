@@ -4,6 +4,12 @@ All notable changes to `advanced_haptics` will be documented in this file.
 
 ---
 
+## 1.0.10
+
+- **CHORE:** Bumped `flutter_lints` to `^6.0.0` (dev dependency only; no runtime changes). The package and example analyze cleanly under the current lint set.
+
+---
+
 ## 1.0.9
 
 Robustness release: every method is now safe to call on any platform and device.

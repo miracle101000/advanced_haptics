@@ -45,7 +45,7 @@ Add `advanced_haptics` to your `pubspec.yaml` dependencies:
 
 ```yaml
 dependencies:
-  advanced_haptics: ^1.0.9 # Use the latest version
+  advanced_haptics: ^1.0.10 # Use the latest version
 ```
 
 Then, run `flutter pub get` in your terminal.
