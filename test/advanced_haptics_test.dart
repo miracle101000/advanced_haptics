@@ -43,6 +43,39 @@ class RecordingPlatform
         'atTime': atTime,
       });
 
+  bool primitivesSupported = false;
+
+  @override
+  Future<void> playPattern({
+    required List<Map<String, Object?>> events,
+    required List<int> timings,
+    required List<int> amplitudes,
+    double atTime = 0.0,
+  }) =>
+      _record('playPattern', null, <String, Object?>{
+        'events': events,
+        'timings': timings,
+        'amplitudes': amplitudes,
+        'atTime': atTime,
+      });
+
+  @override
+  Future<void> playComposition({
+    required List<Map<String, Object?>> primitives,
+    required List<int> timings,
+    required List<int> amplitudes,
+  }) =>
+      _record('playComposition', null, <String, Object?>{
+        'primitives': primitives,
+        'timings': timings,
+        'amplitudes': amplitudes,
+      });
+
+  @override
+  Future<bool> arePrimitivesSupported({required List<int> ids}) =>
+      _record('arePrimitivesSupported', primitivesSupported,
+          <String, Object?>{'ids': ids});
+
   @override
   Future<void> playAhap({required String path, double atTime = 0.0}) =>
       _record('playAhap', null, <String, Object?>{
@@ -262,6 +295,111 @@ void main() {
       expect(() => AdvancedHaptics.seek(offset: -1), throwsArgumentError);
       expect(() => AdvancedHaptics.stop(atTime: -1), throwsArgumentError);
       expect(platform.calls, isEmpty);
+    });
+  });
+
+  group('playPattern', () {
+    test('sends sorted events plus the flattened waveform', () async {
+      final pattern = HapticPattern(const [
+        HapticTransient(at: Duration(milliseconds: 100), intensity: 0.5),
+        HapticContinuous(duration: Duration(milliseconds: 50), sharpness: 0.2),
+      ]);
+      await AdvancedHaptics.playPattern(pattern, atTime: 0.25);
+      expect(platform.calls, ['playPattern']);
+      final events = platform.lastArgs['events'] as List<Map<String, Object?>>;
+      expect(events.map((e) => e['type']), ['continuous', 'transient']);
+      expect(events[0]['duration'], 0.05);
+      expect(events[1]['time'], 0.1);
+      expect(events[1]['intensity'], 0.5);
+      expect(platform.lastArgs['timings'], [50, 50, 30]);
+      expect(platform.lastArgs['amplitudes'], [255, 0, 128]);
+      expect(platform.lastArgs['atTime'], 0.25);
+    });
+
+    test('does nothing for an empty pattern', () async {
+      await AdvancedHaptics.playPattern(const HapticPattern([]));
+      expect(platform.calls, isEmpty);
+    });
+
+    test('rejects out-of-range events before calling the platform', () {
+      expect(
+        () => AdvancedHaptics.playPattern(
+            const HapticPattern([HapticTransient(intensity: 1.5)])),
+        throwsArgumentError,
+      );
+      expect(
+        () => AdvancedHaptics.playPattern(const HapticPattern(
+            [HapticContinuous(duration: Duration.zero)])),
+        throwsArgumentError,
+      );
+      expect(platform.calls, isEmpty);
+    });
+  });
+
+  group('playComposition', () {
+    const primitives = [
+      AndroidPrimitiveEvent(AndroidHapticPrimitive.click),
+      AndroidPrimitiveEvent(AndroidHapticPrimitive.tick,
+          scale: 0.5, delay: Duration(milliseconds: 50)),
+    ];
+
+    test('sends primitives and a waveform fallback on Android', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      await AdvancedHaptics.playComposition(primitives);
+      expect(platform.calls, ['playComposition']);
+      expect(platform.lastArgs['primitives'], [
+        {'id': 1, 'scale': 1.0, 'delayMs': 0},
+        {'id': 7, 'scale': 0.5, 'delayMs': 50},
+      ]);
+      // click at 0 (30 ms pulse), tick at 30 + 50 = 80 ms at 0.5 * 0.7.
+      expect(platform.lastArgs['timings'], [30, 50, 30]);
+      expect(platform.lastArgs['amplitudes'], [255, 0, 89]);
+    });
+
+    test('renders through playPattern on other platforms', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      await AdvancedHaptics.playComposition(primitives);
+      expect(platform.calls, ['playPattern']);
+      final events = platform.lastArgs['events'] as List<Map<String, Object?>>;
+      expect(events.length, 2);
+      expect(events[1]['time'], 0.08);
+      expect(events[1]['sharpness'], 1.0);
+    });
+
+    test('rejects empty input and bad scales', () {
+      expect(() => AdvancedHaptics.playComposition(const []),
+          throwsArgumentError);
+      expect(
+        () => AdvancedHaptics.playComposition(const [
+          AndroidPrimitiveEvent(AndroidHapticPrimitive.click, scale: 2),
+        ]),
+        throwsArgumentError,
+      );
+      expect(platform.calls, isEmpty);
+    });
+  });
+
+  group('supportsAndroidPrimitives', () {
+    test('asks the platform on Android', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      platform.primitivesSupported = true;
+      expect(await AdvancedHaptics.supportsAndroidPrimitives(), isTrue);
+      expect(platform.lastArgs['ids'], [1, 7]);
+      expect(
+        await AdvancedHaptics.supportsAndroidPrimitives(
+            [AndroidHapticPrimitive.thud]),
+        isTrue,
+      );
+      expect(platform.lastArgs['ids'], [2]);
+    });
+
+    test('is false elsewhere and never throws', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      expect(await AdvancedHaptics.supportsAndroidPrimitives(), isFalse);
+      expect(platform.calls, isEmpty);
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      platform.errorToThrow = StateError('boom');
+      expect(await AdvancedHaptics.supportsAndroidPrimitives(), isFalse);
     });
   });
 

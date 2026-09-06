@@ -10,6 +10,7 @@ A Flutter plugin for playing powerful, custom haptic feedback patterns. This pac
 ## ✨ Features
 
 -   ✅ **Unified API**: A single, easy-to-use Dart API for both platforms.
+-   🎨 **Cross-Platform Patterns**: Design one `HapticPattern` of taps and buzzes with intensity and sharpness; it renders natively on both platforms.
 -   🎯 **Custom Waveforms**: Full control of vibration timing, intensity, and looping.
 -   🍎 **Core Haptics on iOS**: Play custom `.ahap` files and control the player state.
 -   🧠 **Predefined Patterns**: A suite of built-in methods like `lightTap()`, `success()`, `error()` and more.
@@ -28,6 +29,8 @@ A Flutter plugin for playing powerful, custom haptic feedback patterns. This pac
 | Player Controls     | ✅ Emulated              | ✅ Native                         |
 | Amplitude Control   | ✅ API 26+               | ✅ Native (iPhone 8+)             |
 | Predefined Patterns | ✅ API 29+ / 🔁 Fallback | ➖ Ignored                        |
+| Patterns (`playPattern`) | ✅ Primitives API 30+ / 🔁 Waveform | ✅ Core Haptics / 🔁 Fallback |
+| Composition Primitives | ✅ API 30+ / 🔁 Fallback | 🔁 Core Haptics approximation    |
 
 > ℹ️ **Android note:** Amplitude control requires API 26 (Android 8.0 Oreo). On older devices the on/off shape of the pattern is played through the legacy vibrator API. Predefined effects (e.g. `tick`, `click`) require API 29; older devices play a short approximation. Use `hasCustomHapticsSupport()` to check for full amplitude support at runtime.
 
@@ -45,7 +48,7 @@ Add `advanced_haptics` to your `pubspec.yaml` dependencies:
 
 ```yaml
 dependencies:
-  advanced_haptics: ^1.0.10 # Use the latest version
+  advanced_haptics: ^1.1.0 # Use the latest version
 ```
 
 Then, run `flutter pub get` in your terminal.
@@ -97,6 +100,34 @@ if (hasSupport) {
   // Safe to use advanced haptics
 }
 ```
+
+#### 🎨 Design a Pattern Once
+
+`HapticPattern` is the recommended way to build custom feedback. Each event has an **intensity** (strength) and a **sharpness** (feel, from soft to crisp). On iOS both map directly to Core Haptics. On Android 11+ a tap-only pattern plays as `VibrationEffect.Composition` primitives (`TICK`, `CLICK` or `THUD` chosen by sharpness), and any other pattern, or any older device, gets the same timeline flattened into an amplitude waveform.
+
+```dart
+final heartbeat = HapticPatternBuilder()
+    .tap(intensity: 0.6, sharpness: 0.3)
+    .pause(const Duration(milliseconds: 120))
+    .tap(intensity: 1.0, sharpness: 0.3)
+    .pause(const Duration(milliseconds: 600))
+    .build();
+
+await AdvancedHaptics.playPattern(heartbeat);
+
+// Buzzes are continuous events; events can also be placed at absolute times.
+final charge = HapticPatternBuilder()
+    .buzz(const Duration(milliseconds: 300), intensity: 0.4, sharpness: 0.2)
+    .buzz(const Duration(milliseconds: 300), intensity: 1.0, sharpness: 0.8)
+    .add(const HapticTransient(at: Duration(milliseconds: 650), intensity: 1.0))
+    .build();
+await AdvancedHaptics.playPattern(charge);
+
+// Need the raw Android-style waveform? It is one call away.
+final HapticWaveform wave = charge.toWaveform();
+```
+
+Patterns play through the same player as waveforms, so `pause()`, `resume()`, `seek()` and `stop()` work on them (except when Android rendered the pattern as composition primitives, which cannot be paused).
 
 #### ⚡ Predefined Patterns
 
@@ -152,6 +183,24 @@ await AdvancedHaptics.stop();
 Both lists must be non-empty and of equal length, timings must be non-negative, amplitudes must be within 0-255, and `repeat` must be `-1` or a valid index; otherwise an `ArgumentError` is thrown before anything reaches the platform.
 
 > On iOS the whole pattern loops when `repeat` is not `-1` (Core Haptics has no loop start point). Segments shorter than 40 ms are rendered as crisp transient taps.
+
+#### Composition Primitives (API 30+)
+
+Android 11 introduced tuned haptic primitives that feel far crisper than waveform pulses on supporting hardware. `playComposition` mirrors `VibrationEffect.Composition`: each primitive has a `scale` (0-1) and a `delay` measured from the end of the previous one.
+
+```dart
+await AdvancedHaptics.playComposition(const [
+  AndroidPrimitiveEvent(AndroidHapticPrimitive.click),
+  AndroidPrimitiveEvent(AndroidHapticPrimitive.tick, scale: 0.6, delay: Duration(milliseconds: 80)),
+  AndroidPrimitiveEvent(AndroidHapticPrimitive.tick, scale: 0.6, delay: Duration(milliseconds: 80)),
+  AndroidPrimitiveEvent(AndroidHapticPrimitive.thud, delay: Duration(milliseconds: 200)),
+]);
+
+// Optional: check native support (API 30+ and hardware). Defaults to click + tick.
+final bool native = await AdvancedHaptics.supportsAndroidPrimitives([AndroidHapticPrimitive.thud]);
+```
+
+*Primitives: `click`, `tick`, `quickRise`, `slowRise`, `quickFall` (API 30) and `thud`, `spin`, `lowTick` (API 31).* Devices that cannot play a primitive, and Android below API 30, get a waveform approximation. On iOS the composition is rendered as the closest Core Haptics events, so the call is safe everywhere.
 
 #### Native Android Effects (API 29+)
 

@@ -1,8 +1,12 @@
 import 'package:flutter/foundation.dart';
 
 import 'advanced_haptics_platform_interface.dart';
+import 'src/android_primitives.dart';
+import 'src/haptic_pattern.dart';
 
 export 'advanced_haptics_platform_interface.dart' show AdvancedHapticsPlatform;
+export 'src/android_primitives.dart';
+export 'src/haptic_pattern.dart';
 
 /// Android's predefined vibration effects (`VibrationEffect.createPredefined`,
 /// API 29+).
@@ -114,6 +118,103 @@ class AdvancedHaptics {
       repeat: repeat,
       atTime: atTime,
     );
+  }
+
+  /// Plays a platform-independent [HapticPattern].
+  ///
+  /// This is the recommended way to design one pattern for both platforms.
+  /// Build it with [HapticPatternBuilder] or from [HapticEvent]s directly.
+  ///
+  /// Rendering:
+  /// * **iOS** (Core Haptics): every [HapticTransient] and [HapticContinuous]
+  ///   becomes the matching Core Haptics event with its intensity and
+  ///   sharpness.
+  /// * **Android 11+** with primitive support: a pattern made only of
+  ///   transients is played as a `VibrationEffect.Composition` (`TICK`,
+  ///   `CLICK` or `THUD` chosen by sharpness).
+  /// * **Everywhere else**: the pattern is flattened with
+  ///   [HapticPattern.toWaveform] and played like [playWaveform].
+  ///
+  /// [atTime] - (iOS only) Delay in seconds before playback starts.
+  ///
+  /// An empty pattern does nothing. Throws an [ArgumentError] when any event
+  /// is out of range.
+  static Future<void> playPattern(
+    HapticPattern pattern, {
+    double atTime = 0.0,
+  }) async {
+    pattern.validate();
+    _validateTime(atTime, 'atTime');
+    if (pattern.isEmpty) {
+      return;
+    }
+    final waveform = pattern.toWaveform();
+    await _platform.playPattern(
+      events: pattern.toJson(),
+      timings: waveform.timings,
+      amplitudes: waveform.amplitudes,
+      atTime: atTime,
+    );
+  }
+
+  /// Plays an Android `VibrationEffect.Composition` built from [primitives].
+  ///
+  /// On Android 11+ (API 30) with hardware support the primitives play
+  /// natively; on older or unsupported Android devices a waveform
+  /// approximation is played instead. On iOS the composition is rendered
+  /// through [playPattern] using the closest Core Haptics events, so the same
+  /// call gives sensible feedback on both platforms.
+  ///
+  /// Throws an [ArgumentError] when [primitives] is empty or a scale or delay
+  /// is out of range.
+  static Future<void> playComposition(
+    List<AndroidPrimitiveEvent> primitives,
+  ) async {
+    if (primitives.isEmpty) {
+      throw ArgumentError.value(primitives, 'primitives', 'must not be empty');
+    }
+    for (final p in primitives) {
+      p.validate();
+    }
+    final pattern = AndroidPrimitiveEvent.toPattern(primitives);
+    final waveform = pattern.toWaveform();
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      await _platform.playComposition(
+        primitives: [for (final p in primitives) p.toJson()],
+        timings: waveform.timings,
+        amplitudes: waveform.amplitudes,
+      );
+    } else {
+      await _platform.playPattern(
+        events: pattern.toJson(),
+        timings: waveform.timings,
+        amplitudes: waveform.amplitudes,
+      );
+    }
+  }
+
+  /// Whether this Android device can play every primitive in [primitives]
+  /// natively (API 30+ and hardware support).
+  ///
+  /// Defaults to checking [AndroidHapticPrimitive.click] and
+  /// [AndroidHapticPrimitive.tick], the two [playPattern] relies on. Always
+  /// `false` on other platforms, and never throws.
+  static Future<bool> supportsAndroidPrimitives([
+    List<AndroidHapticPrimitive> primitives = const [
+      AndroidHapticPrimitive.click,
+      AndroidHapticPrimitive.tick,
+    ],
+  ]) async {
+    if (defaultTargetPlatform != TargetPlatform.android || primitives.isEmpty) {
+      return false;
+    }
+    try {
+      return await _platform.arePrimitivesSupported(
+        ids: [for (final p in primitives) p.id],
+      );
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Plays a custom haptic pattern from an `.ahap` file on iOS.

@@ -52,6 +52,45 @@ class MethodChannelAdvancedHaptics extends AdvancedHapticsPlatform {
   }
 
   @override
+  Future<void> playPattern({
+    required List<Map<String, Object?>> events,
+    required List<int> timings,
+    required List<int> amplitudes,
+    double atTime = 0.0,
+  }) {
+    return _invoke<void>('playPattern', <String, Object?>{
+      'events': events,
+      'timings': timings,
+      'amplitudes': amplitudes,
+      'atTime': atTime,
+    });
+  }
+
+  @override
+  Future<void> playComposition({
+    required List<Map<String, Object?>> primitives,
+    required List<int> timings,
+    required List<int> amplitudes,
+  }) {
+    return _invoke<void>('playComposition', <String, Object?>{
+      'primitives': primitives,
+      'timings': timings,
+      'amplitudes': amplitudes,
+    });
+  }
+
+  @override
+  Future<bool> arePrimitivesSupported({required List<int> ids}) async {
+    try {
+      return await _invoke<bool>(
+              'arePrimitivesSupported', <String, Object?>{'ids': ids}) ??
+          false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  @override
   Future<void> playAhap({required String path, double atTime = 0.0}) {
     return _invoke<void>('playAhap', <String, Object?>{
       'path': path,

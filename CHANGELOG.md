@@ -4,6 +4,17 @@ All notable changes to `advanced_haptics` will be documented in this file.
 
 ---
 
+## 1.1.0
+
+Design one pattern, play it everywhere.
+
+- **NEW:** `HapticPattern`, `HapticTransient`, `HapticContinuous` and `HapticPatternBuilder`: a platform-independent pattern model with intensity and sharpness per event. `AdvancedHaptics.playPattern()` renders it as Core Haptics events on iOS, as `VibrationEffect.Composition` primitives on Android 11+ (tap-only patterns, `TICK`/`CLICK`/`THUD` chosen by sharpness), and as a waveform everywhere else. `HapticPattern.toWaveform()` exposes the flattening for callers who want the raw waveform.
+- **NEW:** `AndroidHapticPrimitive`, `AndroidPrimitiveEvent` and `AdvancedHaptics.playComposition()`: direct access to Android's composition primitives (`click`, `tick`, `thud`, `spin`, `quickRise`, `slowRise`, `quickFall`, `lowTick`). Unsupported devices and Android below API 30 get a waveform approximation; iOS renders the closest Core Haptics events, so the call is safe on every platform.
+- **NEW:** `AdvancedHaptics.supportsAndroidPrimitives()` reports native primitive support (API 30+ and hardware).
+- Compositions and predefined effects cannot be paused; patterns played as waveforms or Core Haptics can.
+
+---
+
 ## 1.0.10
 
 - **CHORE:** Bumped `flutter_lints` to `^6.0.0` (dev dependency only; no runtime changes). The package and example analyze cleanly under the current lint set.

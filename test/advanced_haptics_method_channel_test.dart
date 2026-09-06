@@ -92,6 +92,58 @@ void main() {
     });
   });
 
+  test('playPattern encodes events and the waveform', () async {
+    install((_) => null);
+    await platform.playPattern(
+      events: const [
+        {'type': 'transient', 'time': 0.0, 'intensity': 1.0, 'sharpness': 0.5},
+      ],
+      timings: const [30],
+      amplitudes: const [255],
+      atTime: 0.5,
+    );
+    expect(log.single.method, 'playPattern');
+    expect(log.single.arguments, <String, Object?>{
+      'events': [
+        {'type': 'transient', 'time': 0.0, 'intensity': 1.0, 'sharpness': 0.5},
+      ],
+      'timings': [30],
+      'amplitudes': [255],
+      'atTime': 0.5,
+    });
+  });
+
+  test('playComposition encodes primitives and the waveform', () async {
+    install((_) => null);
+    await platform.playComposition(
+      primitives: const [
+        {'id': 1, 'scale': 1.0, 'delayMs': 0},
+      ],
+      timings: const [30],
+      amplitudes: const [255],
+    );
+    expect(log.single.method, 'playComposition');
+    expect(log.single.arguments, <String, Object?>{
+      'primitives': [
+        {'id': 1, 'scale': 1.0, 'delayMs': 0},
+      ],
+      'timings': [30],
+      'amplitudes': [255],
+    });
+  });
+
+  test('arePrimitivesSupported returns false on errors and no plugin',
+      () async {
+    expect(await platform.arePrimitivesSupported(ids: const [1]), isFalse);
+    install((_) => throw PlatformException(code: 'X'));
+    expect(await platform.arePrimitivesSupported(ids: const [1]), isFalse);
+    install((_) => true);
+    expect(await platform.arePrimitivesSupported(ids: const [1, 7]), isTrue);
+    expect(log.last.arguments, <String, Object?>{
+      'ids': [1, 7],
+    });
+  });
+
   test('playAhap encodes path and atTime', () async {
     install((_) => null);
     await platform.playAhap(path: 'assets/x.ahap', atTime: 2);

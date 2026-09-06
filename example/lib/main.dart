@@ -27,6 +27,7 @@ class HapticsDemoPage extends StatefulWidget {
 
 class _HapticsDemoPageState extends State<HapticsDemoPage> {
   bool? _hasSupport;
+  bool? _hasPrimitives;
   final HapticEngine _chargeEngine = HapticEngine(HapticTaskType.charge);
   double _progress = 0;
 
@@ -44,10 +45,50 @@ class _HapticsDemoPageState extends State<HapticsDemoPage> {
 
   Future<void> _checkSupport() async {
     final hasSupport = await AdvancedHaptics.hasCustomHapticsSupport();
+    final hasPrimitives = await AdvancedHaptics.supportsAndroidPrimitives();
     if (mounted) {
-      setState(() => _hasSupport = hasSupport);
+      setState(() {
+        _hasSupport = hasSupport;
+        _hasPrimitives = hasPrimitives;
+      });
     }
   }
+
+  static final HapticPattern _heartbeat = HapticPatternBuilder()
+      .tap(intensity: 0.6, sharpness: 0.3)
+      .pause(const Duration(milliseconds: 120))
+      .tap(intensity: 1.0, sharpness: 0.3)
+      .pause(const Duration(milliseconds: 500))
+      .tap(intensity: 0.6, sharpness: 0.3)
+      .pause(const Duration(milliseconds: 120))
+      .tap(intensity: 1.0, sharpness: 0.3)
+      .build();
+
+  static final HapticPattern _charge = HapticPatternBuilder()
+      .buzz(const Duration(milliseconds: 300), intensity: 0.4, sharpness: 0.2)
+      .buzz(const Duration(milliseconds: 300), intensity: 1.0, sharpness: 0.8)
+      .add(const HapticTransient(at: Duration(milliseconds: 650)))
+      .build();
+
+  static final HapticPattern _typing = HapticPatternBuilder()
+      .tap(intensity: 0.5, sharpness: 1.0)
+      .pause(const Duration(milliseconds: 60))
+      .tap(intensity: 0.5, sharpness: 1.0)
+      .pause(const Duration(milliseconds: 60))
+      .tap(intensity: 0.5, sharpness: 1.0)
+      .pause(const Duration(milliseconds: 60))
+      .tap(intensity: 0.8, sharpness: 1.0)
+      .build();
+
+  static const List<AndroidPrimitiveEvent> _composition = [
+    AndroidPrimitiveEvent(AndroidHapticPrimitive.click),
+    AndroidPrimitiveEvent(AndroidHapticPrimitive.tick,
+        scale: 0.6, delay: Duration(milliseconds: 80)),
+    AndroidPrimitiveEvent(AndroidHapticPrimitive.tick,
+        scale: 0.6, delay: Duration(milliseconds: 80)),
+    AndroidPrimitiveEvent(AndroidHapticPrimitive.thud,
+        delay: Duration(milliseconds: 200)),
+  ];
 
   /// Runs a haptic call and shows failures instead of leaving an unhandled
   /// future error. Invalid arguments and native errors are the two things
@@ -98,7 +139,40 @@ class _HapticsDemoPageState extends State<HapticsDemoPage> {
               ),
             ),
           ),
+          ListTile(
+            title: const Text('Android composition primitives'),
+            subtitle: const Text('API 30+ and hardware support'),
+            trailing: Text(
+              _hasPrimitives == null
+                  ? 'Checking…'
+                  : _hasPrimitives!
+                      ? '✅ Native'
+                      : '🔁 Approximated',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
           const Divider(),
+          _Section(
+            title: 'Patterns (one design, both platforms)',
+            children: [
+              _button('Heartbeat', () => AdvancedHaptics.playPattern(_heartbeat)),
+              _button('Charge up', () => AdvancedHaptics.playPattern(_charge)),
+              _button('Typing ticks', () => AdvancedHaptics.playPattern(_typing)),
+            ],
+          ),
+          _Section(
+            title: 'Composition primitives',
+            children: [
+              _button('Click, tick, tick, thud',
+                  () => AdvancedHaptics.playComposition(_composition)),
+              for (final primitive in AndroidHapticPrimitive.values)
+                _button(
+                  primitive.name,
+                  () => AdvancedHaptics.playComposition(
+                      [AndroidPrimitiveEvent(primitive)]),
+                ),
+            ],
+          ),
           _Section(
             title: 'Presets',
             children: [

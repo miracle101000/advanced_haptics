@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'advanced_haptics'
-  s.version          = '1.0.10'
+  s.version          = '1.1.0'
   s.summary          = 'Custom haptic feedback for Flutter: waveforms, Core Haptics and .ahap files.'
   s.description      = <<-DESC
 A Flutter plugin for playing advanced, custom haptic feedback patterns on Android and iOS,

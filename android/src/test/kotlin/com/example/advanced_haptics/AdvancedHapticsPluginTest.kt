@@ -415,6 +415,105 @@ internal class AdvancedHapticsPluginTest {
         assertEquals(1, slice.repeat)
     }
 
+    // --- Patterns and compositions ----------------------------------------
+
+    private fun patternCall(
+        events: List<Map<String, Any?>>?,
+        timings: List<Any?>? = listOf(30, 70, 30),
+        amplitudes: List<Any?>? = listOf(255, 0, 255)
+    ): MethodCall = MethodCall(
+        "playPattern",
+        mapOf("events" to events, "timings" to timings, "amplitudes" to amplitudes, "atTime" to 0.0)
+    )
+
+    private val twoTaps = listOf(
+        mapOf("type" to "transient", "time" to 0.0, "intensity" to 1.0, "sharpness" to 0.5),
+        mapOf("type" to "transient", "time" to 0.1, "intensity" to 1.0, "sharpness" to 0.5)
+    )
+
+    @Test
+    fun playPattern_belowApi30_playsFlattenedWaveform() {
+        val vibrator = mockVibrator()
+        val result = mockResult()
+        pluginWith(vibrator).onMethodCall(patternCall(twoTaps), result)
+        // Legacy patterns always start with an "off" slot.
+        @Suppress("DEPRECATION")
+        verify(vibrator).vibrate(longArrayOf(0, 30, 70, 30), -1)
+        verify(result).success(null)
+    }
+
+    @Test
+    fun playPattern_withBadWaveform_isInvalid() {
+        val vibrator = mockVibrator()
+        val result = mockResult()
+        pluginWith(vibrator).onMethodCall(patternCall(twoTaps, timings = listOf(30), amplitudes = listOf(255, 0)), result)
+        verify(result).error(eq(AdvancedHapticsPlugin.ERROR_INVALID_ARGS), any(), any())
+        verifyNoInteractions(vibrator)
+    }
+
+    @Test
+    fun playPattern_isPausable() {
+        val vibrator = mockVibrator()
+        val clock = FakeClock()
+        val plugin = pluginWithClock(vibrator, clock)
+        plugin.onMethodCall(patternCall(twoTaps), mockResult())
+        clock.nowMs += 50
+        val result = mockResult()
+        plugin.onMethodCall(call("pause", "atTime" to 0.0), result)
+        verify(vibrator).cancel()
+        verify(result).success(null)
+    }
+
+    @Test
+    fun playComposition_belowApi30_playsFlattenedWaveform() {
+        val vibrator = mockVibrator()
+        val result = mockResult()
+        val primitives = listOf(
+            mapOf("id" to 1, "scale" to 1.0, "delayMs" to 0),
+            mapOf("id" to 7, "scale" to 0.5, "delayMs" to 50)
+        )
+        pluginWith(vibrator).onMethodCall(
+            MethodCall(
+                "playComposition",
+                mapOf("primitives" to primitives, "timings" to listOf(30, 50, 30), "amplitudes" to listOf(255, 0, 89))
+            ),
+            result
+        )
+        @Suppress("DEPRECATION")
+        verify(vibrator).vibrate(longArrayOf(0, 30, 50, 30), -1)
+        verify(result).success(null)
+    }
+
+    @Test
+    fun arePrimitivesSupported_isFalseBelowApi30() {
+        val result = mockResult()
+        pluginWith(mockVibrator()).onMethodCall(
+            MethodCall("arePrimitivesSupported", mapOf("ids" to listOf(1, 7))),
+            result
+        )
+        verify(result).success(false)
+    }
+
+    @Test
+    fun delaysFor_measuresFromPreviousPrimitiveEnd() {
+        // Taps at 0, 100 and 130 ms with 30 ms primitives: the third one would
+        // start before the second ends, so it follows immediately.
+        val delays = AdvancedHapticsPlugin.delaysFor(
+            doubleArrayOf(0.0, 100.0, 130.0, 300.0),
+            intArrayOf(30, 30, 30, 30)
+        )
+        assertContentEquals(intArrayOf(0, 70, 0, 140), delays)
+    }
+
+    @Test
+    fun primitiveFor_choosesBySharpness() {
+        assertEquals(AdvancedHapticsPlugin.PRIMITIVE_TICK, AdvancedHapticsPlugin.primitiveFor(0.9f, extended = true))
+        assertEquals(AdvancedHapticsPlugin.PRIMITIVE_CLICK, AdvancedHapticsPlugin.primitiveFor(0.5f, extended = true))
+        assertEquals(AdvancedHapticsPlugin.PRIMITIVE_THUD, AdvancedHapticsPlugin.primitiveFor(0.1f, extended = true))
+        // THUD needs API 31; fall back to CLICK on API 30.
+        assertEquals(AdvancedHapticsPlugin.PRIMITIVE_CLICK, AdvancedHapticsPlugin.primitiveFor(0.1f, extended = false))
+    }
+
     @Test
     fun toLegacyPattern_mergesSegmentsAndKeepsLeadingOff() {
         val (pattern, repeat) = AdvancedHapticsPlugin.toLegacyPattern(

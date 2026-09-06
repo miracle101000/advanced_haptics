@@ -143,6 +143,17 @@ public class AdvancedHapticsPlugin: NSObject, FlutterPlugin {
     case "playWaveform":
       handlePlayWaveform(args, result)
 
+    case "playPattern":
+      handlePlayPattern(args, result)
+
+    case "playComposition":
+      // Android primitives are pre-flattened to a waveform by the Dart side.
+      handlePlayWaveform(args, result)
+
+    case "arePrimitivesSupported":
+      // Android-only concept.
+      result(false)
+
     case "playAhap":
       handlePlayAhap(args, result)
 
@@ -245,6 +256,65 @@ public class AdvancedHapticsPlugin: NSObject, FlutterPlugin {
     } catch {
       result(FlutterError(code: "PATTERN_ERROR",
                           message: "Failed to create pattern from waveform data.",
+                          details: error.localizedDescription))
+    }
+  }
+
+  /// Plays a cross-platform pattern: a list of `{type, time, duration,
+  /// intensity, sharpness}` events that map one-to-one onto Core Haptics
+  /// events. `timings`/`amplitudes` carry the same pattern flattened to a
+  /// waveform for devices without Core Haptics.
+  private func handlePlayPattern(_ args: [String: Any], _ result: @escaping FlutterResult) {
+    guard let rawEvents = args["events"] as? [Any] else {
+      result(FlutterError(code: "INVALID_ARGS", message: "'events' must be a list.", details: nil))
+      return
+    }
+    let delay = doubleArg(args, "atTime")
+
+    guard supportsCoreHaptics else {
+      if let timings = numberArray(args["timings"]), let amplitudes = numberArray(args["amplitudes"]),
+         timings.count == amplitudes.count, !timings.isEmpty {
+        let durations = timings.map { max(0, $0) / 1000.0 }
+        let intensities = amplitudes.map {
+          min(max($0, 0), AdvancedHapticsPlugin.maxAmplitude) / AdvancedHapticsPlugin.maxAmplitude
+        }
+        playWaveformFallback(durations: durations, intensities: intensities, repeatIndex: -1, delay: delay)
+      }
+      result(nil)
+      return
+    }
+
+    var events: [CHHapticEvent] = []
+    for raw in rawEvents {
+      guard let event = raw as? [String: Any], let type = event["type"] as? String else { continue }
+      let time = max(0, numberValue(event["time"]))
+      let intensity = Float(min(max(numberValue(event["intensity"], default: 1), 0), 1))
+      let sharpness = Float(min(max(numberValue(event["sharpness"], default: 0.5), 0), 1))
+      let parameters = [
+        CHHapticEventParameter(parameterID: .hapticIntensity, value: intensity),
+        CHHapticEventParameter(parameterID: .hapticSharpness, value: sharpness),
+      ]
+      if type == "continuous" {
+        let duration = numberValue(event["duration"])
+        guard duration > 0 else { continue }
+        events.append(CHHapticEvent(eventType: .hapticContinuous, parameters: parameters,
+                                    relativeTime: time, duration: duration))
+      } else {
+        events.append(CHHapticEvent(eventType: .hapticTransient, parameters: parameters, relativeTime: time))
+      }
+    }
+
+    guard !events.isEmpty else {
+      result(nil)
+      return
+    }
+
+    do {
+      let pattern = try CHHapticPattern(events: events, parameters: [])
+      play(pattern: pattern, delay: delay, loop: false, loopEnd: 0, result: result)
+    } catch {
+      result(FlutterError(code: "PATTERN_ERROR",
+                          message: "Failed to create pattern from events.",
                           details: error.localizedDescription))
     }
   }
@@ -542,6 +612,12 @@ public class AdvancedHapticsPlugin: NSObject, FlutterPlugin {
       numbers.append(number.doubleValue)
     }
     return numbers
+  }
+
+  private func numberValue(_ value: Any?, default defaultValue: Double = 0) -> Double {
+    guard let number = value as? NSNumber else { return defaultValue }
+    let result = number.doubleValue
+    return result.isFinite ? result : defaultValue
   }
 
   /// Reads a non-negative, finite double; anything else counts as 0.

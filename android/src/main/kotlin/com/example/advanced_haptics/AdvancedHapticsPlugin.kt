@@ -9,12 +9,14 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.annotation.ChecksSdkIntAtLeast
+import androidx.annotation.RequiresApi
 import androidx.annotation.VisibleForTesting
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
+import kotlin.math.roundToInt
 
 /**
  * Android implementation of the `advanced_haptics` plugin.
@@ -118,7 +120,89 @@ class AdvancedHapticsPlugin : FlutterPlugin, MethodCallHandler {
         }
 
         private fun isKnownEffect(effectId: Int): Boolean = effectId in EFFECT_CLICK..EFFECT_TEXTURE_TICK
+
+        // VibrationEffect.Composition primitive IDs (API 30). THUD, SPIN and
+        // LOW_TICK were made public in API 31.
+        internal const val PRIMITIVE_CLICK = 1
+        internal const val PRIMITIVE_THUD = 2
+        internal const val PRIMITIVE_SPIN = 3
+        internal const val PRIMITIVE_QUICK_RISE = 4
+        internal const val PRIMITIVE_SLOW_RISE = 5
+        internal const val PRIMITIVE_QUICK_FALL = 6
+        internal const val PRIMITIVE_TICK = 7
+        internal const val PRIMITIVE_LOW_TICK = 8
+
+        @ChecksSdkIntAtLeast(api = Build.VERSION_CODES.R)
+        private fun hasPrimitives(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+
+        @ChecksSdkIntAtLeast(api = Build.VERSION_CODES.S)
+        private fun hasExtendedPrimitives(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+
+        private fun primitiveAvailable(id: Int): Boolean = when (id) {
+            PRIMITIVE_CLICK, PRIMITIVE_QUICK_RISE, PRIMITIVE_SLOW_RISE, PRIMITIVE_QUICK_FALL, PRIMITIVE_TICK ->
+                hasPrimitives()
+            PRIMITIVE_THUD, PRIMITIVE_SPIN, PRIMITIVE_LOW_TICK -> hasExtendedPrimitives()
+            else -> false
+        }
+
+        /** Picks the primitive whose feel is closest to a transient's sharpness. */
+        internal fun primitiveFor(sharpness: Float, extended: Boolean): Int = when {
+            sharpness < 0.35f && extended -> PRIMITIVE_THUD
+            sharpness > 0.7f -> PRIMITIVE_TICK
+            else -> PRIMITIVE_CLICK
+        }
+
+        /** Approximate primitive lengths, used when the device cannot report them (API 30). */
+        internal fun nominalPrimitiveDurationMs(id: Int): Int = when (id) {
+            PRIMITIVE_THUD -> 60
+            PRIMITIVE_SPIN, PRIMITIVE_QUICK_RISE -> 150
+            PRIMITIVE_SLOW_RISE -> 500
+            PRIMITIVE_QUICK_FALL -> 100
+            PRIMITIVE_TICK, PRIMITIVE_LOW_TICK -> 20
+            else -> 30 // PRIMITIVE_CLICK
+        }
+
+        /**
+         * Converts absolute start times into composition delays, which Android
+         * measures from the end of the previous primitive. A primitive that
+         * would have to start before the previous one ends starts right after it.
+         */
+        internal fun delaysFor(startsMs: DoubleArray, durationsMs: IntArray): IntArray {
+            val delays = IntArray(startsMs.size)
+            var previousEnd = 0.0
+            for (i in startsMs.indices) {
+                val delay = (startsMs[i] - previousEnd).roundToInt().coerceAtLeast(0)
+                delays[i] = delay
+                previousEnd += delay + durationsMs[i]
+            }
+            return delays
+        }
+
+        /** Validates waveform arguments; returns a message describing the problem or `null`. */
+        internal fun validateWaveformArgs(timings: LongArray?, amplitudes: IntArray?, repeat: Int): String? = when {
+            timings == null || amplitudes == null -> "'timings' and 'amplitudes' must be lists of numbers."
+            timings.isEmpty() -> "'timings' must not be empty."
+            timings.size != amplitudes.size ->
+                "'timings' and 'amplitudes' must have the same length (got ${timings.size} and ${amplitudes.size})."
+            timings.any { it < 0 } -> "'timings' must not contain negative values."
+            amplitudes.any { it < 0 || it > MAX_AMPLITUDE } -> "'amplitudes' must be within 0..$MAX_AMPLITUDE."
+            repeat != NO_REPEAT && repeat !in timings.indices ->
+                "'repeat' must be -1 or an index into 'timings' (got $repeat)."
+            else -> null
+        }
     }
+
+    /** One `addPrimitive` call of a composition. */
+    internal class Primitive(val id: Int, val scale: Float, val delayMs: Int)
+
+    /** One event of a cross-platform pattern, times in milliseconds. */
+    internal class PatternEvent(
+        val transient: Boolean,
+        val timeMs: Double,
+        val durationMs: Double,
+        val intensity: Float,
+        val sharpness: Float
+    )
 
     /**
      * A waveform plus the arithmetic needed to pause, resume and seek it.
@@ -245,6 +329,9 @@ class AdvancedHapticsPlugin : FlutterPlugin, MethodCallHandler {
         when (call.method) {
             "hasCustomHapticsSupport" -> result.success(hasCustomHapticsSupport())
             "playWaveform" -> playWaveform(call, result)
+            "playPattern" -> playPattern(call, result)
+            "playComposition" -> playComposition(call, result)
+            "arePrimitivesSupported" -> result.success(arePrimitivesSupported(call.intList("ids")))
             "playPredefined" -> playPredefined(call, result)
             "playAhap" -> vibrateWaveform(AHAP_FALLBACK_TIMINGS, AHAP_FALLBACK_AMPLITUDES, NO_REPEAT, result)
             "success" -> vibrateWaveform(SUCCESS_TIMINGS, SUCCESS_AMPLITUDES, NO_REPEAT, result)
@@ -269,23 +356,118 @@ class AdvancedHapticsPlugin : FlutterPlugin, MethodCallHandler {
         val timings = call.longArray("timings")
         val amplitudes = call.intArray("amplitudes")
         val repeat = call.int("repeat") ?: NO_REPEAT
-        val problem = when {
-            timings == null || amplitudes == null ->
-                "'timings' and 'amplitudes' must be lists of numbers."
-            timings.isEmpty() -> "'timings' must not be empty."
-            timings.size != amplitudes.size ->
-                "'timings' and 'amplitudes' must have the same length (got ${timings.size} and ${amplitudes.size})."
-            timings.any { it < 0 } -> "'timings' must not contain negative values."
-            amplitudes.any { it < 0 || it > MAX_AMPLITUDE } -> "'amplitudes' must be within 0..$MAX_AMPLITUDE."
-            repeat != NO_REPEAT && repeat !in timings.indices ->
-                "'repeat' must be -1 or an index into 'timings' (got $repeat)."
-            else -> null
-        }
+        val problem = validateWaveformArgs(timings, amplitudes, repeat)
         if (problem != null) {
             result.error(ERROR_INVALID_ARGS, problem, null)
             return
         }
         vibrateWaveform(timings!!, amplitudes!!, repeat, result)
+    }
+
+    /**
+     * Plays a cross-platform pattern. A transient-only pattern becomes a
+     * `VibrationEffect.Composition` on API 30+ when the device supports the
+     * primitives; everything else plays the pre-flattened waveform.
+     */
+    private fun playPattern(call: MethodCall, result: Result) {
+        val timings = call.longArray("timings")
+        val amplitudes = call.intArray("amplitudes")
+        val problem = validateWaveformArgs(timings, amplitudes, NO_REPEAT)
+        if (problem != null) {
+            result.error(ERROR_INVALID_ARGS, problem, null)
+            return
+        }
+        val events = call.events("events")
+        if (hasPrimitives() && events != null) {
+            val effect = composeTransients(events)
+            if (effect != null) {
+                vibrateEffect(effect, result)
+                return
+            }
+        }
+        vibrateWaveform(timings!!, amplitudes!!, NO_REPEAT, result)
+    }
+
+    /** Plays explicit composition primitives, falling back to the flattened waveform. */
+    private fun playComposition(call: MethodCall, result: Result) {
+        val timings = call.longArray("timings")
+        val amplitudes = call.intArray("amplitudes")
+        val problem = validateWaveformArgs(timings, amplitudes, NO_REPEAT)
+        if (problem != null) {
+            result.error(ERROR_INVALID_ARGS, problem, null)
+            return
+        }
+        val primitives = call.primitives("primitives")
+        if (hasPrimitives() && primitives != null) {
+            val vib = vibrator
+            val effect = if (vib != null) composeIfSupported(vib, primitives) else null
+            if (effect != null) {
+                vibrateEffect(effect, result)
+                return
+            }
+        }
+        vibrateWaveform(timings!!, amplitudes!!, NO_REPEAT, result)
+    }
+
+    private fun arePrimitivesSupported(ids: List<Int>?): Boolean {
+        val vib = vibrator ?: return false
+        if (!hasPrimitives() || ids.isNullOrEmpty()) return false
+        if (ids.any { !primitiveAvailable(it) }) return false
+        return try {
+            vib.areAllPrimitivesSupported(*ids.toIntArray())
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    private fun composeTransients(events: List<PatternEvent>): VibrationEffect? {
+        val vib = vibrator ?: return null
+        if (events.isEmpty() || events.any { !it.transient }) return null
+        val sorted = events.sortedBy { it.timeMs }
+        val extended = hasExtendedPrimitives()
+        val ids = IntArray(sorted.size) { primitiveFor(sorted[it].sharpness, extended) }
+        val durations = primitiveDurations(vib, ids) ?: return null
+        val delays = delaysFor(DoubleArray(sorted.size) { sorted[it].timeMs }, durations)
+        val primitives = List(sorted.size) { Primitive(ids[it], sorted[it].intensity, delays[it]) }
+        return composeIfSupported(vib, primitives)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    private fun primitiveDurations(vib: Vibrator, ids: IntArray): IntArray? = try {
+        if (hasExtendedPrimitives()) {
+            val reported = vib.getPrimitiveDurations(*ids)
+            IntArray(ids.size) { if (reported[it] > 0) reported[it] else nominalPrimitiveDurationMs(ids[it]) }
+        } else {
+            IntArray(ids.size) { nominalPrimitiveDurationMs(ids[it]) }
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    /** Builds the composition, or returns `null` when the device cannot play all of it. */
+    @RequiresApi(Build.VERSION_CODES.R)
+    private fun composeIfSupported(vib: Vibrator, primitives: List<Primitive>): VibrationEffect? {
+        if (primitives.isEmpty() || primitives.any { !primitiveAvailable(it.id) }) return null
+        return try {
+            val ids = primitives.map { it.id }.distinct().toIntArray()
+            if (!vib.areAllPrimitivesSupported(*ids)) return null
+            val composition = VibrationEffect.startComposition()
+            for (p in primitives) {
+                composition.addPrimitive(p.id, p.scale.coerceIn(0f, 1f), p.delayMs.coerceAtLeast(0))
+            }
+            composition.compose()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Plays a ready-made effect; compositions and predefined effects cannot be paused. */
+    private fun vibrateEffect(effect: VibrationEffect, result: Result) {
+        clearScheduled()
+        active = null
+        pausedAtMs = null
+        runVibration(result) { it.vibrate(effect) }
     }
 
     private fun vibrateWaveform(timings: LongArray, amplitudes: IntArray, repeat: Int, result: Result) {
@@ -517,6 +699,36 @@ class AdvancedHapticsPlugin : FlutterPlugin, MethodCallHandler {
             numbers.add(item as? Number ?: return null)
         }
         return numbers
+    }
+
+    private fun MethodCall.intList(key: String): List<Int>? = numberList(key)?.map { it.toInt() }
+
+    private fun MethodCall.events(key: String): List<PatternEvent>? {
+        val raw = arg(key) as? List<*> ?: return null
+        val events = ArrayList<PatternEvent>(raw.size)
+        for (item in raw) {
+            val map = item as? Map<*, *> ?: return null
+            val type = map["type"] as? String ?: return null
+            val timeMs = ((map["time"] as? Number)?.toDouble() ?: 0.0) * 1000.0
+            val durationMs = ((map["duration"] as? Number)?.toDouble() ?: 0.0) * 1000.0
+            val intensity = ((map["intensity"] as? Number)?.toFloat() ?: 1f).coerceIn(0f, 1f)
+            val sharpness = ((map["sharpness"] as? Number)?.toFloat() ?: 0.5f).coerceIn(0f, 1f)
+            events.add(PatternEvent(type == "transient", timeMs.coerceAtLeast(0.0), durationMs, intensity, sharpness))
+        }
+        return events
+    }
+
+    private fun MethodCall.primitives(key: String): List<Primitive>? {
+        val raw = arg(key) as? List<*> ?: return null
+        val primitives = ArrayList<Primitive>(raw.size)
+        for (item in raw) {
+            val map = item as? Map<*, *> ?: return null
+            val id = (map["id"] as? Number)?.toInt() ?: return null
+            val scale = ((map["scale"] as? Number)?.toFloat() ?: 1f).coerceIn(0f, 1f)
+            val delayMs = ((map["delayMs"] as? Number)?.toInt() ?: 0).coerceAtLeast(0)
+            primitives.add(Primitive(id, scale, delayMs))
+        }
+        return primitives
     }
 
     private fun MethodCall.longArray(key: String): LongArray? =

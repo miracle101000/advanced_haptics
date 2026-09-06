@@ -48,6 +48,34 @@ abstract class AdvancedHapticsPlatform extends PlatformInterface {
     throw UnimplementedError('playWaveform() has not been implemented.');
   }
 
+  /// Plays a [events] timeline (serialised `HapticEvent`s sorted by time),
+  /// with a pre-flattened waveform ([timings]/[amplitudes]) for platforms and
+  /// devices that cannot render the events natively.
+  Future<void> playPattern({
+    required List<Map<String, Object?>> events,
+    required List<int> timings,
+    required List<int> amplitudes,
+    double atTime = 0.0,
+  }) {
+    throw UnimplementedError('playPattern() has not been implemented.');
+  }
+
+  /// Plays Android composition [primitives] (serialised
+  /// `AndroidPrimitiveEvent`s), with a pre-flattened waveform fallback.
+  Future<void> playComposition({
+    required List<Map<String, Object?>> primitives,
+    required List<int> timings,
+    required List<int> amplitudes,
+  }) {
+    throw UnimplementedError('playComposition() has not been implemented.');
+  }
+
+  /// Whether the device can play every Android primitive in [ids].
+  Future<bool> arePrimitivesSupported({required List<int> ids}) {
+    throw UnimplementedError(
+        'arePrimitivesSupported() has not been implemented.');
+  }
+
   /// Plays an Apple Core Haptics `.ahap` file located at asset [path].
   Future<void> playAhap({required String path, double atTime = 0.0}) {
     throw UnimplementedError('playAhap() has not been implemented.');
